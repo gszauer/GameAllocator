@@ -3,7 +3,26 @@
 
 #include "mem.h"
 #include "types.h"
-#include "assert.h"
+
+#ifndef _DEBUG
+#define assert(condition) ;
+#define Assert(condition) ;
+#define NotImplemented() ;
+#else 
+void runtime_assert(bool condition, const char* file, int line) {
+	char* data = (char*)((void*)0);
+	if (condition == false) {
+		*data = '\0';
+	}
+}
+
+void NotImplemented() {
+	char* data = (char*)((void*)0);
+	*data = '\0';
+}
+#define assert(condition) runtime_assert(condition, __FILE__, __LINE__)
+#define Assert(condition) runtime_assert(condition, __FILE__, __LINE__)
+#endif
 
 #define IDT_TIMER1 1001
 #define IDC_LIST 1
@@ -60,8 +79,8 @@ struct MemoryDebugInfo {
 
 		u32* mask = (u32*)PageMask;
 		for (int page = NumOverheadPages; page < NumberOfPages; ++page) { // Don't start at page 0?
-			const u32 block = page / 32;
-			const int bit = page % 32;
+			const u32 block = page / Memory::TrackingUnitSize;
+			const int bit = page % Memory::TrackingUnitSize;
 
 			const bool used = mask[block] & (1 << bit);
 			if (!used) {
@@ -142,7 +161,46 @@ struct Win32Color {
 	}
 };
 
+struct FrameBuffer { // For double buffered window
+	BITMAPINFO RenderBufferInfo;
+	unsigned char* Memory;
+	unsigned int Width;
+	unsigned int Height;
+
+	FrameBuffer() {
+		Memory = 0;
+		Width = 0;
+		Height = 0;
+	}
+
+	void Initialize() {
+		assert(Memory == 0);
+
+		Width = GetSystemMetrics(SM_CXSCREEN);
+		Height = GetSystemMetrics(SM_CYSCREEN);
+
+		RenderBufferInfo.bmiHeader.biSize = sizeof(RenderBufferInfo.bmiHeader);
+		RenderBufferInfo.bmiHeader.biWidth = Width;
+		RenderBufferInfo.bmiHeader.biHeight = -((int)Height);
+		RenderBufferInfo.bmiHeader.biPlanes = 1;
+		RenderBufferInfo.bmiHeader.biBitCount = 32;
+		RenderBufferInfo.bmiHeader.biCompression = BI_RGB;
+
+		int bitmapMemorySize = (Width * Height) * 4;
+		Memory = (unsigned char*)VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+		memset(Memory, 0, bitmapMemorySize);
+	}
+
+	void Destroy() {
+		assert(Memory != 0);
+		VirtualFree(Memory, 0, MEM_RELEASE);
+		Memory = 0;
+	}
+};
+
 static HWND gMemoryWindow;
+static FrameBuffer gFrameBuffer;
+static i32 scrollY = 0;
 
 // https://yal.cc/cpp-a-very-tiny-dll/
 void log(const char* pszFormat, ...) {
@@ -293,6 +351,97 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 	SendMessage(list, LB_SETCURSEL, selection, 0);
 }
 
+static void FillBox(RECT& rect, Win32Color& c) {
+	const unsigned char r = c.r;
+	const unsigned char g = c.g;
+	const unsigned char b = c.b;
+
+	const unsigned int BufferSize = gFrameBuffer.Width * gFrameBuffer.Height * 4;
+
+	i32 top = rect.top < 0 ? 0 : rect.top;
+	i32 bottom = rect.bottom < 0 ? 0 : rect.bottom;
+	i32 left = rect.left < 0 ? 0 : rect.left;
+	i32 right = rect.right < 0 ? 0 : rect.right;
+
+	for (int row = top; row < bottom; ++row) {
+		for (int col = left; col < right; ++col) {
+			unsigned int pixel = (row * gFrameBuffer.Width + col) * 4;
+			if (pixel >= BufferSize) {
+				break;
+			}
+			gFrameBuffer.Memory[pixel + 0] = b;
+			gFrameBuffer.Memory[pixel + 1] = g;
+			gFrameBuffer.Memory[pixel + 2] = r;
+			gFrameBuffer.Memory[pixel + 3] = 255;
+		}
+	}
+}
+
+void RedrawMemoryChart(HWND hwnd, Win32Color& bgColor, Win32Color& trackMemoryColor, Win32Color& usedMemoryColor, Win32Color& freeMemoryColor) {
+	RECT clientRect;
+	GetClientRect(hwnd, &clientRect);
+	int clientWidth = clientRect.right - clientRect.left;
+	int clientHeight = clientRect.bottom - clientRect.top;
+
+	const u32 pageWidth = 3;
+	const u32 pageHeight = 5;
+	const u32 pagePadding = 1;
+
+	const u32 numColumns = clientWidth / (pagePadding + pageWidth + pagePadding);
+	const u32 numRows = clientHeight / (pagePadding + pageHeight + pagePadding) + (clientHeight % (pagePadding + pageHeight + pagePadding) ? 1 : 0);
+
+	MemoryDebugInfo memInfo(Memory::GlobalAllocator);
+	u32* mask = (u32*)memInfo.PageMask;
+
+	u32 firstVisibleRow = scrollY / (pagePadding + pageHeight + pagePadding);
+	if (scrollY % (pagePadding + pageHeight + pagePadding) != 0 && firstVisibleRow >= 1) {
+		firstVisibleRow -= 1; // the row above is partially visible.
+	}
+	u32 lastVisibleRow = (memInfo.NumberOfPages) / numColumns;
+	if ((memInfo.NumberOfPages) % numColumns != 0) {
+		lastVisibleRow += 1;
+	}
+
+	if (lastVisibleRow - firstVisibleRow > numRows) {
+		lastVisibleRow = firstVisibleRow + numRows;
+	}
+
+	FillBox(clientRect, bgColor);
+
+	RECT draw;
+	for (u32 row = firstVisibleRow; row <= lastVisibleRow; ++row) {
+		for (u32 col = 0; col < numColumns; ++col) {
+			u32 index = row * numColumns + col;
+			if (index > memInfo.NumberOfPages) {
+				break;
+			}
+
+			// Get memory, see if it's in use
+			const u32 m = index / Memory::TrackingUnitSize;
+			const u32 b = index % Memory::TrackingUnitSize;
+			const bool used = mask[m] & (1 << b);
+
+			draw.left = col * (pagePadding + pageWidth + pagePadding) + pagePadding;
+			draw.right = draw.left + pageWidth;
+			draw.top = row * (pagePadding + pageHeight + pagePadding) + pagePadding;
+			draw.bottom = draw.top + pageHeight;
+
+			draw.top -= scrollY;
+			draw.bottom -= scrollY;
+
+			if (index < memInfo.NumOverheadPages) {
+				FillBox(draw, trackMemoryColor);
+			}
+			else if (used) {
+				FillBox(draw, usedMemoryColor);
+			}
+			else {
+				FillBox(draw, freeMemoryColor);
+			}
+		}
+	}
+}
+
 Win32WindowLayout GetWindowLayout(HWND hwnd) {
 	const u32 sideMargin = 50;
 	const u32 topMargin = 25;
@@ -371,7 +520,6 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 	static Win32Color freeMemoryColor(110, 110, 220);
 	static Win32Color usedMemoryColor(110, 240, 110);
 	static Win32Color trackMemoryColor(255, 110, 110);
-	static i32 scrollY = 0;
 
 	switch (iMsg) {
 	case WM_CREATE:
@@ -379,6 +527,7 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 		freeMemoryColor.CreateBrushObject();
 		usedMemoryColor.CreateBrushObject();
 		trackMemoryColor.CreateBrushObject();
+		scrollY = 0;
 		SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor.brush);
 		break;
 	case WM_DESTROY:
@@ -386,6 +535,7 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 		freeMemoryColor.DestroyBrushObject();
 		usedMemoryColor.DestroyBrushObject();
 		trackMemoryColor.DestroyBrushObject();
+		
 		break;
 	case WM_VSCROLL:
 		{
@@ -422,14 +572,46 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			ScrollWindow(hwnd, 0, -pt.y, NULL, NULL);
 			scrollY = pos;
 
+			RedrawMemoryChart(hwnd, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 		}
+		break;
+	case WM_SIZE:
+	{
+		static u32 oldNumRows = 0;
+		RECT clientRect;
+
+		GetClientRect(hwnd, &clientRect);
+		int clientWidth = clientRect.right - clientRect.left;
+		int clientHeight = clientRect.bottom - clientRect.top;
+
+		const u32 pageWidth = 3;
+		const u32 pageHeight = 5;
+		const u32 pagePadding = 1;
+
+		const u32 numColumns = clientWidth / (pagePadding + pageWidth + pagePadding);
+		MemoryDebugInfo memInfo(Memory::GlobalAllocator);
+		const u32 maxRows = memInfo.NumberOfPages / numColumns + (memInfo.NumberOfPages % numColumns ? 1 : 0) + 1;
+
+		if (oldNumRows != maxRows) {
+			SCROLLINFO si = { 0 };
+			si.cbSize = sizeof(SCROLLINFO);
+			si.fMask = SIF_ALL;
+			si.nMin = 0;
+			si.nMax = maxRows * (pagePadding + pageHeight + pagePadding);
+			si.nPage = (clientRect.bottom - clientRect.top);
+			si.nPos = 0;
+			si.nTrackPos = 0;
+			SetScrollInfo(hwnd, SB_VERT, &si, true);
+			oldNumRows = maxRows;
+		}
+	}
 		break;
 	case WM_PAINT:
 	case WM_ERASEBKGND:
 		{
-			MemoryDebugInfo memInfo(Memory::GlobalAllocator);
-			u32* mask = (u32*)memInfo.PageMask;
+			//MemoryDebugInfo memInfo(Memory::GlobalAllocator);
+			//u32* mask = (u32*)memInfo.PageMask;
 
 			PAINTSTRUCT ps;
 			RECT clientRect;
@@ -439,6 +621,27 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			GetClientRect(hwnd, &clientRect);
 			int clientWidth = clientRect.right - clientRect.left;
 			int clientHeight = clientRect.bottom - clientRect.top;
+
+			assert(clientWidth < gFrameBuffer.Width);
+			assert(clientHeight < gFrameBuffer.Height);
+
+			if (clientWidth > gFrameBuffer.Width) {
+				clientWidth = gFrameBuffer.Width;
+			}
+			if (clientHeight > gFrameBuffer.Height) {
+				clientHeight = gFrameBuffer.Height;
+			}
+
+			StretchDIBits(hdc,
+				0, 0, clientWidth, clientHeight,
+				0, 0, clientWidth, clientHeight,
+				gFrameBuffer.Memory, &gFrameBuffer.RenderBufferInfo,
+				DIB_RGB_COLORS, SRCCOPY);
+
+#if 0
+			GetClientRect(hwnd, &clientRect);
+			clientWidth = clientRect.right - clientRect.left;
+			clientHeight = clientRect.bottom - clientRect.top;
 
 			const u32 pageWidth = 3;
 			const u32 pageHeight = 5;
@@ -485,8 +688,8 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 					}
 
 					// Get memory, see if it's in use
-					const u32 m = index / 32;
-					const u32 b = index % 32;
+					const u32 m = index / Memory::TrackingUnitSize;
+					const u32 b = index % Memory::TrackingUnitSize;
 					const bool used = mask[m] & (1 << b);
 
 					draw.left = col * (pagePadding + pageWidth + pagePadding) + pagePadding;
@@ -505,6 +708,7 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 					}
 				}
 			}
+#endif
 
 			EndPaint(hwnd, &ps);
 		}
@@ -530,6 +734,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 
 	static Win32Color boxColor(50, 50, 50);
 	static Win32Color textColor(220, 220, 220);
+	static Win32Color freeMemoryColor(110, 110, 220);
+	static Win32Color usedMemoryColor(110, 240, 110);
+	static Win32Color trackMemoryColor(255, 110, 110);
 
 	switch (iMsg) {
 	case WM_NCCREATE:
@@ -543,10 +750,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		break;
 	case WM_CREATE:
 		Assert(gMemoryWindow == hwnd);
+		gFrameBuffer.Initialize();
 		{ // Set up render styles
 			bgColor.CreateBrushObject();
 			boxColor.CreateBrushObject();
 			textColor.CreateBrushObject();
+			freeMemoryColor.CreateBrushObject();
+			usedMemoryColor.CreateBrushObject();
+			trackMemoryColor.CreateBrushObject();
+
 			SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor.brush);
 		}
 		{ // Create Memory chart window
@@ -606,6 +818,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 			Win32WindowLayout layout = GetWindowLayout(hwnd);
 			SetWindowLayout(layout, hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
 			ResetListBoxContent(Memory::GlobalAllocator, hwndList);
+			RedrawMemoryChart(hwndChart, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 		}
 		break;
@@ -618,6 +831,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		bgColor.DestroyBrushObject();
 		boxColor.DestroyBrushObject();
 		textColor.DestroyBrushObject();
+		freeMemoryColor.DestroyBrushObject();
+		usedMemoryColor.DestroyBrushObject();
+		trackMemoryColor.DestroyBrushObject();
+		gFrameBuffer.Destroy();
 		break;
 	case WM_COMMAND:
 	{
@@ -674,6 +891,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		if (update) {
 			SetWindowLayout(GetWindowLayout(hwnd), hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
 			ResetListBoxContent(Memory::GlobalAllocator, hwndList);
+			RedrawMemoryChart(hwndChart, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 		}
 	};
@@ -773,9 +991,10 @@ void CreateMemoryWindow() {
 
 // https ://stackoverflow.com/questions/58513890/how-to-create-minimal-win32-c-program-with-no-windows-apis-in-import-table-with
 extern "C" DWORD CALLBACK run() {
-	unsigned int size = MB(32);
+	unsigned int size = MB(512);
+
 	LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	Memory::Initialize(memory, size);
+	Memory::GlobalAllocator = Memory::Initialize(memory, size);
 
 	CreateMemoryWindow();
 
@@ -791,7 +1010,8 @@ extern "C" DWORD CALLBACK run() {
 		Sleep(1);
 	} while (gMemoryWindow != 0);
 
-	Memory::Shutdown();
+	Memory::Shutdown(Memory::GlobalAllocator);
+	Memory::GlobalAllocator = 0;
 	VirtualFree(memory, 0, MEM_RELEASE);
 
 	return 0;

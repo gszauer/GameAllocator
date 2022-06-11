@@ -139,12 +139,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="assert.cpp" />
     <ClCompile Include="mem.cpp" />
     <ClCompile Include="WinMain.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="assert.h" />
     <ClInclude Include="mem.h" />
     <ClInclude Include="types.h" />
   </ItemGroup>

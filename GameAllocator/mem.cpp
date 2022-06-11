@@ -7,7 +7,6 @@ Memory::Allocator* Memory::GlobalAllocator;
 #define str(a) #a
 #define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
 
-
 #define assert1(cond) Memory::Assert(cond, "assert1", __LINE__, __FILE__)
 #define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
 #define NotImplementedException() Memory::NotImplemented(__LINE__, __FILE__)
@@ -44,9 +43,9 @@ namespace Memory {
 
 		// Pad out to sizeof(32) (if MaskTrackerSize is 32). This is because AllocatorPageMask will often be used as a u32 array
 		// and we want to make sure that enough space is reserved.
-		u32 allocatorPageArraySize = allocatorNumberOfPages / MaskTrackerSize + (allocatorNumberOfPages % MaskTrackerSize ? 1 : 0);
-		assert(allocatorPageArraySize % 8 == 0, "allocatorPageArraySize should always be a multiple of 8");
-		return allocatorPageArraySize / 8; // In bytes, not bits
+		u32 allocatorPageArraySize = allocatorNumberOfPages / TrackingUnitSize + (allocatorNumberOfPages % TrackingUnitSize ? 1 : 0);
+		assert(allocatorPageArraySize % (TrackingUnitSize / 8) == 0, "allocatorPageArraySize should always be a multiple of 8");
+		return allocatorPageArraySize * (TrackingUnitSize / 8); // In bytes, not bits
 	}
 
 	static u8* AllocatorAllocatable(Allocator* allocator) {
@@ -57,8 +56,7 @@ namespace Memory {
 		return allocator->size - allocator->offsetToAllocatable;
 	}
 
-	// Returns 0 on error. Since the first page is always tracking overhead
-	// it's invalid for a range
+	// Returns 0 on error. Since the first page is always tracking overhead it's invalid for a range
 	static u32 FindRange(Allocator* allocator, u32 numPages) {
 		assert1(allocator != 0);
 		assert1(numPages != 0);
@@ -73,8 +71,8 @@ namespace Memory {
 		u32 numBits = 0;
 
 		for (u32 i = 0; i < numBitsInMask; ++i) {
-			u32 m = i / MaskTrackerSize;
-			u32 b = i % MaskTrackerSize;
+			u32 m = i / TrackingUnitSize;
+			u32 b = i % TrackingUnitSize;
 
 			bool set = mask[m] & (1 << b);
 
@@ -121,8 +119,8 @@ namespace Memory {
 
 		for (u32 i = startBit; i < startBit + bitCount; ++i) {
 
-			u32 m = i / MaskTrackerSize;
-			u32 b = i % MaskTrackerSize;
+			u32 m = i / TrackingUnitSize;
+			u32 b = i % TrackingUnitSize;
 
 #if _DEBUG
 			assert1(i < numBitsInMask);
@@ -149,8 +147,8 @@ namespace Memory {
 
 		for (u32 i = startBit; i < startBit + bitCount; ++i) {
 
-			u32 m = i / MaskTrackerSize;
-			u32 b = i % MaskTrackerSize;
+			u32 m = i / TrackingUnitSize;
+			u32 b = i % TrackingUnitSize;
 
 #if _DEBUG
 			assert1(i < numBitsInMask);
@@ -189,9 +187,9 @@ namespace Memory {
 	}
 }
 
-static_assert (Memory::MaskTrackerSize % 8 == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
+static_assert (Memory::TrackingUnitSize % 8 == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
 
-void Memory::Initialize(void* memory, u32 bytes) {
+Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 	// First, make sure that the memory being passed in is aligned well
 	u64 ptr = (u64)((const void*)memory);
 	assert(ptr % DefaultAlignment == 0, "Memory::Initialize, the memory being managed start aligned to Memory::DefaultAlignment");
@@ -237,17 +235,22 @@ void Memory::Initialize(void* memory, u32 bytes) {
 
 
 	if (ptr % DefaultAlignment != 0 || bytes % PageSize != 0 || bytes / PageSize < 10) {
-		GlobalAllocator = 0; // Not initialized
-		assert1(false); // Break in debug mode
+		return 0;
 	}
-	else {
-		GlobalAllocator = (Allocator*)memory;
-	}
+	
+	return (Allocator*)memory;
 }
 
-void Memory::Shutdown() {
-	assert(GlobalAllocator != 0, "Memory::Shutdown called without it being initialized");
-	Allocator* allocator = GlobalAllocator;
+Memory::Allocator* Memory::GetGlobalAllocator() {
+	return GlobalAllocator;
+}
+
+void Memory::SetGlobalAllocator(Allocator* allocator) {
+	GlobalAllocator = allocator;
+}
+
+void Memory::Shutdown(Allocator* allocator) {
+	assert(allocator != 0, "Memory::Shutdown called without it being initialized");
 	u32* mask = (u32*)AllocatorPageMask(allocator);
 	u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
 	assert(allocator->offsetToAllocatable != 0, "Memory::Shutdown, trying to shut down an un-initialized allocator");
@@ -279,11 +282,79 @@ void Memory::Shutdown() {
 }
 
 void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
-	// TODO: Optimize for 64 bit memset!
+#if 0
 	u8* mem = (u8*)memory;
 	for (u32 i = 0; i < size; ++i) {
 		mem[i] = value;
 	}
+#else
+
+	// Above is the naive implementation, and below is a bit more optimized one
+	// This could still be optimized further by going wider, it's fast enough for me
+
+#if ATLAS_64
+	if (size % sizeof(u64) != 0) { // Align if needed
+#else
+	if (size % sizeof(u32) != 0) { // Align if needed
+#endif
+		u8* mem = (u8*)memory;
+		while (size % sizeof(u32) != 0) {
+			*mem = value;
+			mem++;
+			size -= 1;
+		}
+		memory = mem;
+	}
+
+#if ATLAS_64
+	u64 size_64 = size / sizeof(u64);
+	u64* ptr_64 = (u64*)memory;
+	u32 v32 = (((u32)value) << 8) | (((u32)value) << 16) | (((u32)value) << 24) | ((u32)value);
+	u64 val_64 = (((u64)v32) << 32) | ((u64)v32);
+	for (u32 i = 0; i < size_64; ++i) {
+		ptr_64[i] = val_64;
+	}
+#endif
+
+#if ATLAS_64
+	u32 size_32 = (size - size_64 * sizeof(u64)) / sizeof(u32);
+	u32* ptr_32 = (u32*)(ptr_64 + size_64);;
+#else
+	u32 size_32 = size / sizeof(u32);
+	u32* ptr_32 = (u32*)memory;
+#endif
+	u32 val_32 = (((u32)value) << 8) | (((u32)value) << 16) | (((u32)value) << 24) | ((u32)value);
+	for (u32 i = 0; i < size_32; ++i) {
+		ptr_32[i] = val_32;
+	}
+	
+#if ATLAS_64
+	u32 size_16 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32)) / sizeof(u16);
+#else
+	u32 size_16 = (size - size_32 * sizeof(u32)) / sizeof(u16);
+#endif
+	u16* ptr_16 = (u16*)(ptr_32 + size_32);
+	u32 val_16 = (((u16)value) << 8) | ((u16)value);
+	for (u32 i = 0; i < size_16; ++i) {
+		ptr_16[i] = val_16;
+	}
+
+#if ATLAS_64
+	u32 size_8 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
+#else
+	u32 size_8 = (size - size_32 * sizeof(u32) - size_16 * sizeof(u16));
+#endif
+	u8* ptr_8 = (u8*)(ptr_16 + size_16);
+	for (u32 i = 0; i < size_8; ++i) {
+		ptr_8[i] = value;
+	}
+
+#if ATLAS_64
+	assert(size_64 * sizeof(u64) + size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
+#else
+	assert(size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
+#endif
+#endif
 }
 
 void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator* allocator) {
@@ -351,7 +422,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	return mem;
 }
 
-void Memory::Free(void* memory, const char* location, Allocator* allocator) {
+void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	assert(memory != 0, "Memory:Free can't free a null pointer");
 
 	if (allocator == 0) {
@@ -359,6 +430,8 @@ void Memory::Free(void* memory, const char* location, Allocator* allocator) {
 		assert(allocator != 0, "Memory::Free couldn't assign global allocator");
 	}
 
+	// Retrieve allocation information from header. The allocation header always
+	// preceeds the allocation.
 	u8* mem = (u8*)memory;
 	mem -= sizeof(Allocation);
 	Allocation* allocation = (Allocation*)mem;
