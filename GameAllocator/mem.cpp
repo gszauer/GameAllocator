@@ -51,11 +51,37 @@ namespace Memory {
 	}
 
 	static inline u8* AllocatorAllocatable(Allocator* allocator) {
+#if MEM_FIRST_FIT
 		return (u8*)allocator + allocator->offsetToAllocatable;
+#else
+		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+
+		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / PageSize;
+		if (metaDataSizeBytes % PageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * PageSize; // This way, allocatable will start on a page boundary
+
+		return (u8*)allocator + metaDataSizeBytes;
+#endif
 	}
 
 	static inline u32 AllocatorAllocatableSize(Allocator* allocator) {
+#if MEM_FIRST_FIT
 		return allocator->size - allocator->offsetToAllocatable;
+#else
+		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+
+		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / PageSize;
+		if (metaDataSizeBytes % PageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * PageSize; // This way, allocatable will start on a page boundary
+
+		return allocator->size - metaDataSizeBytes;
+#endif
 	}
 
 	// Returns 0 on error. Since the first page is always tracking overhead it's invalid for a range
@@ -346,7 +372,11 @@ namespace Memory {
 		alloc.free_2048 = 0;
 		alloc.active = 0;
 		alloc.size = 0;
+#if MEM_FIRST_FIT
 		alloc.offsetToAllocatable = 0;
+#else
+		alloc.scanBit = 0;
+#endif
 	}
 }
 
@@ -377,7 +407,11 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 		numberOfMasksUsed += 1;
 	}
 	metaDataSizeBytes = numberOfMasksUsed * PageSize; // This way, allocatable will start on a page boundary
+#if MEM_FIRST_FIT
 	allocator->offsetToAllocatable = metaDataSizeBytes;
+#else
+	allocator->scanBit = 0;
+#endif
 	SetRange(allocator, 0, numberOfMasksUsed);
 
 #if _DEBUG
@@ -385,8 +419,8 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 		// Fill memory with pattern. Memory is zeroed out on allocation, so it's fine to have
 		// junk in here as the initial value. Don't need it in production tough...
 		const u8 stamp[] = "-MEMORY-";
-		u8* mem = (u8*)allocator + allocator->offsetToAllocatable;
-		u32 size = allocator->size - allocator->offsetToAllocatable;
+		u8* mem = AllocatorAllocatable(allocator);
+		u32 size = AllocatorAllocatableSize(allocator);
 		for (u32 i = 0; i < size; ++i) {
 			mem[i] = stamp[i % 7];
 		}
@@ -416,7 +450,9 @@ void Memory::Shutdown(Allocator* allocator) {
 	assert(allocator != 0, "Memory::Shutdown called without it being initialized");
 	u32* mask = (u32*)AllocatorPageMask(allocator);
 	u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+#if MEM_FIRST_FIT
 	assert(allocator->offsetToAllocatable != 0, "Memory::Shutdown, trying to shut down an un-initialized allocator");
+#endif
 	assert(allocator->size > 0, "Memory::Shutdown, trying to shut down an un-initialized allocator");
 
 	// Unset tracking bits
@@ -566,7 +602,9 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 		else if (allocationSize <= 1024) {
 			return SubAllocate(1024, &allocator->free_1024, location, allocator);
 		}
-		// TODO: Super allocator
+		else if (allocationSize <= 2048) {
+			return SubAllocate(2048, &allocator->free_2048, location, allocator);
+		}
 	}
 
 	// Find enough memory to allocate
@@ -645,7 +683,10 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 			SubRelease(memory, 1024, &allocator->free_1024, location, allocator);
 			return;
 		}
-		// TODO: Super allocator free
+		else if (paddedAllocationSize <= 2048) {
+			SubRelease(memory, 2048, &allocator->free_2048, location, allocator);
+			return;
+		}
 	}
 
 	// Clear the bits that where tracking this memory

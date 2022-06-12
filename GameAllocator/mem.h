@@ -42,6 +42,13 @@ static_assert (sizeof(u64) == 8, "u64 should be defined as an 8 byte type");
 #endif
 #endif
 
+// When allocating new memory, if MEM_FIRST_FIT is defined and set to 1 every allocation will scan
+// the available memory from the first bit to the last bit looking for enough space to satisfy the
+// allocation. If MEM_FIRST_FIT is set to 0, then the memory is searched iterativley. Ie, when we 
+// allocate the position in memory after the allocation is saved, and the next allocation starts
+// searching from there.
+#define MEM_FIRST_FIT 0
+
 namespace Memory {
 	struct Allocation {
 		Allocation* prev;
@@ -61,7 +68,11 @@ namespace Memory {
 
 		Allocation* active;
 		u32 size;
+#if MEM_FIRST_FIT
 		u32 offsetToAllocatable;
+#else
+		u32 scanBit;
+#endif
 	};
 
 	// TODO: STD class so i can std::vector<int, Memory::STL> 

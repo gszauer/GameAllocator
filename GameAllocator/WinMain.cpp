@@ -62,6 +62,8 @@ struct MemoryDebugInfo {
 	u32 NumUsedPages;
 	u32 NumOverheadPages;
 
+	
+
 	MemoryDebugInfo(Memory::Allocator* allocator) {
 		u64 allocatorHeaderSize = sizeof(Memory::Allocator);
 		u64 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
@@ -70,7 +72,15 @@ struct MemoryDebugInfo {
 		NumberOfPages = allocator->size / Memory::PageSize; // 1 page = 4096 bytes, how many are needed
 		assert(allocator->size % Memory::PageSize == 0, "Allocator size should line up with page size");
 		
-		u32 allocatorOverheadBytes = allocator->offsetToAllocatable;
+		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / Memory::PageSize;
+		if (metaDataSizeBytes % Memory::PageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * Memory::PageSize; // This way, allocatable will start on a page boundary
+
+		u32 allocatorOverheadBytes = metaDataSizeBytes;
 		assert(allocatorOverheadBytes % Memory::PageSize == 0, "Offset to allocatable should always line up with page size");
 
 		NumFreePages = 0;
@@ -97,6 +107,25 @@ struct MemoryDebugInfo {
 	bool IsPageSet(u32 page) {
 		NotImplemented();
 		return false;
+	}
+
+private:
+	static inline u32 AllocatorPageMaskSize(Memory::Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
+		u32 allocatorNumberOfPages = allocator->size / Memory::PageSize; // 1 page = 4096 bytes, how many are needed
+		//assert(allocator->size % PageSize == 0, "Allocator size should line up with page size");
+		// allocatorNumberOfPages is the number of bits that are required to track memory
+
+		// Pad out to sizeof(32) (if MaskTrackerSize is 32). This is because AllocatorPageMask will often be used as a u32 array
+		// and we want to make sure that enough space is reserved.
+		u32 allocatorPageArraySize = allocatorNumberOfPages / Memory::TrackingUnitSize + (allocatorNumberOfPages % Memory::TrackingUnitSize ? 1 : 0);
+		//assert(allocatorPageArraySize % (TrackingUnitSize / 8) == 0, "allocatorPageArraySize should always be a multiple of 8");
+		return allocatorPageArraySize * (Memory::TrackingUnitSize / 8); // In bytes, not bits
+	}
+
+	static inline u32 AllocatorPaddedSize() {
+		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
+		u32 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
+		return allocatorHeaderSize + allocatorHeaderPadding;
 	}
 };
 
