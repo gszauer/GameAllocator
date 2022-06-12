@@ -7,9 +7,16 @@ Memory::Allocator* Memory::GlobalAllocator;
 #define str(a) #a
 #define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
 
+#if _DEBUG
 #define assert1(cond) Memory::Assert(cond, "assert1", __LINE__, __FILE__)
 #define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
-#define NotImplementedException() Memory::NotImplemented(__LINE__, __FILE__)
+#define NotImplementedException() Memory::Assert(false, "Not Implemented", __LINE__, __FILE__)
+#else
+#define assert1(cond) ;
+#define assert(cond, msg) ;
+#define NotImplementedException() ;
+#endif
+
 
 namespace Memory {
 	static void Assert(bool condition, const char* msg, u32 line, const char* file) {
@@ -19,24 +26,19 @@ namespace Memory {
 		}
 	}
 
-	static void NotImplemented(u32 line = 0, const char* file = 0) {
-		char* data = (char*)((void*)0);
-		*data = '\0';
-	}
-
-	static u32 AllocatorPaddedSize() {
+	static inline u32 AllocatorPaddedSize() {
 		u32 allocatorHeaderSize = sizeof(Allocator);
 		u32 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
 		return allocatorHeaderSize + allocatorHeaderPadding;
 	}
 
-	static u8* AllocatorPageMask(Allocator* allocator) {
+	static inline u8* AllocatorPageMask(Allocator* allocator) {
 		u64 allocatorHeaderSize = sizeof(Allocator);
 		u64 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
 		return ((u8*)allocator) + allocatorHeaderSize + allocatorHeaderPadding;
 	}
 
-	static u32 AllocatorPageMaskSize(Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
+	static inline u32 AllocatorPageMaskSize(Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
 		u32 allocatorNumberOfPages = allocator->size / PageSize; // 1 page = 4096 bytes, how many are needed
 		assert(allocator->size % PageSize == 0, "Allocator size should line up with page size");
 		// allocatorNumberOfPages is the number of bits that are required to track memory
@@ -48,16 +50,16 @@ namespace Memory {
 		return allocatorPageArraySize * (TrackingUnitSize / 8); // In bytes, not bits
 	}
 
-	static u8* AllocatorAllocatable(Allocator* allocator) {
+	static inline u8* AllocatorAllocatable(Allocator* allocator) {
 		return (u8*)allocator + allocator->offsetToAllocatable;
 	}
 
-	static u32 AllocatorAllocatableSize(Allocator* allocator) {
+	static inline u32 AllocatorAllocatableSize(Allocator* allocator) {
 		return allocator->size - allocator->offsetToAllocatable;
 	}
 
 	// Returns 0 on error. Since the first page is always tracking overhead it's invalid for a range
-	static u32 FindRange(Allocator* allocator, u32 numPages) {
+	static inline u32 FindRange(Allocator* allocator, u32 numPages) {
 		assert1(allocator != 0);
 		assert1(numPages != 0);
 
@@ -104,7 +106,7 @@ namespace Memory {
 		return startBit;
 	}
 
-	static void SetRange(Allocator* allocator, u32 startBit, u32 bitCount) {
+	static inline void SetRange(Allocator* allocator, u32 startBit, u32 bitCount) {
 		assert1(allocator != 0);
 		assert1(bitCount != 0);
 
@@ -132,7 +134,7 @@ namespace Memory {
 		}
 	}
 
-	static void ClearRange(Allocator* allocator, u32 startBit, u32 bitCount) {
+	static inline void ClearRange(Allocator* allocator, u32 startBit, u32 bitCount) {
 		assert1(allocator != 0);
 		assert1(bitCount != 0);
 
@@ -160,11 +162,172 @@ namespace Memory {
 		}
 	}
 
-	void* SubAllocate(u32 bytes, const char* location, Allocator* allocator, Allocation** freeList);
-	void SubFree(void* memory, const char* location, Allocator* allocator, Allocation** freeList);
+	void* SubAllocate(u32 blockSize, Allocation** freeList, const char* location, Allocator* allocator) {
+		// Sub allocators are always aligned with the Default Alignment. If we didn't do this, we would
+		// have to keep a matrix of block size and alignment, which is too much overhead.
+		
+		// The block size is how fineley to chop up the page. The minimum allocateion size should be 64 bytes.
+		// This is because the Allocation header is 32 bytes its-self, so there is no valid 32 byte allocation.
+		
+		// This function will chop the provided page into several blocks. Since the block size is constant, we
+		// know that headers will be laid out at a stride of blockSize. There is no additional tracking needed.
 
-	void* SuperAllocate(u32 bytes, const char* location, Allocator* allocator, Allocation** freeList);
-	void SuperFree(void* memory, const char* location, Allocator* allocator, Allocation** freeList);
+		// For example, a 4k page could be made up of 64 byte blocks. 4096 / 64 = 64, so we would have 64 64 byte blocks.
+		// If the free list is empty, we fill it by grabbing a page and making 64 free blocks. Each of these blocks
+		// will have a size of 0, and be kept in a free list in the allocator. 
+
+		// Then we grab one of the blocks from the free list, and use it / return it's memory.
+
+		// There is no blocks of the requested size available. Reserve 1 page, and carve it up into blocks.
+		// Add every new block to the free list.
+		if (*freeList == 0) {
+			// Find and reserve 1 free page
+			const u32 page = FindRange(allocator, 1);
+			SetRange(allocator, page, 1);
+			
+			// Zero out the pages memory
+			u8* mem = AllocatorAllocatable(allocator);
+			mem += PageSize * page;
+			Set(mem, 0, PageSize, __LOCATION__);
+
+			// Figure out how many blocks fit into this page
+			const u32 numBlocks = PageSize / blockSize;
+			assert1(numBlocks > 0);
+			assert1(numBlocks < 128); // a 32 byte allocation has 128 blocks. The size of PageMemoryAllocationHeader is 32 bytes, so we can't allocate anything smaller (smaller allocations take up more blocks inside the page)
+
+			// For each block in this page, initialize it's header
+			for (u32 i = 0; i < numBlocks; ++i) {
+				Allocation* alloc = (Allocation*)mem;
+				mem += blockSize;
+
+				// Initialize the allocation header
+				alloc->prev = 0;
+				alloc->size = 0;
+				alloc->next = *freeList;
+				alloc->alignment = DefaultAlignment;
+				alloc->location = location;
+
+				assert(((sizeof(Allocation) % DefaultAlignment) == 0), "Sub allocator is not aligned with default alignment");
+				if (*freeList != 0) {
+					(*freeList)->prev = alloc;
+				}
+				*freeList = alloc;
+			}
+		}
+		assert(*freeList != 0, "The free list literally can't be zero here...");
+
+		// At this point we know the free list has some number of blocks in it. 
+		// Save a reference to the current header & advance the free list
+		// Advance the free list, we're going to be using this one.
+		Allocation* block = *freeList;
+		if ((*freeList)->next != 0) {
+			(*freeList)->next->prev = 0;
+		}
+		*freeList = (*freeList)->next;
+
+		block->prev = 0;
+		block->size = blockSize;
+
+		// Track the sub allocator
+		block->next = allocator->active;
+		if (allocator->active != 0) {
+			allocator->active->prev = block;
+		}
+		allocator->active = block;
+
+#if 0 & _DEBUG
+		u32 freeListcount = 0;
+		for (Allocation* iter = *freeList; iter != 0; iter = iter->next, freeListcount += 1);
+#endif
+
+		// Memory always follows the header
+		return (u8*)block + sizeof(Allocation);
+	}
+
+	void SubRelease(void* memory, u32 blockSize, Allocation** freeList, const char* location, Allocator* allocator) {
+		// Find the allocation header and mark it as free. Early out on double free to avoid breaking.
+		Allocation* header = (Allocation*)((u8*)memory - sizeof(Allocation));
+		assert(header->size != 0, "Double Free!"); // Make sure it's not a double free
+		if (header->size == 0) {
+			return;
+		}
+		header->size = 0;
+
+		// Now remove from the active list.
+		if (header == allocator->active) { // Removing head
+			if (allocator->active->next != 0) {
+				allocator->active->next->prev = 0;
+			}
+			allocator->active = allocator->active->next;
+		}
+		else { // Removing link
+			if (header->next != 0) {
+				header->next->prev = header->prev;
+			}
+			if (header->prev != 0) {
+				header->prev->next = header->next;
+			}
+		}
+
+		// Add memory back into the free list
+		if (*freeList != 0) {
+			assert1((*freeList)->prev == 0);
+			(*freeList)->prev = header;
+		}
+		header->next = *freeList;
+		header->prev = 0;
+		*freeList = header;
+
+		// Find the first allocation inside the page
+		u64 startPage = (u64)((u8*)header - AllocatorAllocatable(allocator)) / PageSize;
+		u8* mem = AllocatorAllocatable(allocator) + startPage * PageSize;
+
+		// Each sub allocator page contains multiple blocks. check if all of the blocks 
+		// belonging to a single page are free, if they are, release the page.
+		bool releasePage = true;
+		
+		const u32 numAllocationsPerPage = PageSize / blockSize;
+		assert1(numAllocationsPerPage >= 1);
+		for (u32 i = 0; i < numAllocationsPerPage; ++i) {
+			Allocation* alloc = (Allocation*)mem;
+			if (alloc->size > 0) {
+				releasePage = false;
+				break;
+			}
+			mem += blockSize;
+		}
+
+		// If appropriate, release entire page
+		if (releasePage) {
+			// Remove from free list
+			mem = AllocatorAllocatable(allocator) + startPage * PageSize;
+			for (u32 i = 0; i < numAllocationsPerPage; ++i) {
+				Allocation* iter = (Allocation*)mem;
+				mem += blockSize;
+				assert1(iter != 0);
+
+				if (*freeList == iter) { // Removing head, advance list
+					*freeList = (*freeList)->next;
+					if ((*freeList) != 0) {
+						(*freeList)->prev = 0;
+					}
+				}
+				else { // Unlink not head
+					if (iter->next != 0) {
+						iter->next->prev = iter->prev;
+					}
+					if (iter->prev != 0) {
+						iter->prev->next = iter->next;
+					}
+				}
+				iter->prev = iter->next = 0;
+			}
+
+			// Clear the tracking bits
+			assert1(startPage > 0);
+			ClearRange(allocator, startPage, 1);
+		}
+	}
 
 	static void Zero(Allocation& alloc) {
 		alloc.prev = 0;
@@ -387,7 +550,24 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	u32 numPagesRequested = allocationSize / PageSize + (allocationSize % PageSize ? 1 : 0);
 	assert(numPagesRequested > 0, "Memory::Allocate needs to request at least 1 page");
 	
-	// TODO: Accelerated allocation based on allocationSize
+	if (alignment == DefaultAlignment) {
+		if (allocationSize <= 64) {
+			return SubAllocate(64, &allocator->free_64, location, allocator);
+		}
+		else if (allocationSize <= 128) {
+			return SubAllocate(128, &allocator->free_128, location, allocator);
+		}
+		else if (allocationSize <= 256) {
+			return SubAllocate(256, &allocator->free_256, location, allocator);
+		}
+		else if (allocationSize <= 512) {
+			return SubAllocate(512, &allocator->free_512, location, allocator);
+		}
+		else if (allocationSize <= 1024) {
+			return SubAllocate(1024, &allocator->free_1024, location, allocator);
+		}
+		// TODO: Super allocator
+	}
 
 	// Find enough memory to allocate
 	u32 firstPage = FindRange(allocator, numPagesRequested);
@@ -436,7 +616,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	mem -= sizeof(Allocation);
 	Allocation* allocation = (Allocation*)mem;
 	u32 alignment = allocation->alignment;
-	u32 size = allocation->size;
+	u32 paddedAllocationSize = allocation->size;
 	assert(allocation->size != 0, "Memory::Free, double free");
 
 	// Figure out how much to step back to the start of the allocation page & 
@@ -444,13 +624,35 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
 	mem -= allocationHeaderPadding;
 
-	// TODO: Early out based on accelerators
+	if (alignment == DefaultAlignment) {
+		if (paddedAllocationSize <= 64) {
+			SubRelease(memory, 64, &allocator->free_64, location, allocator);
+			return;
+		}
+		else if (paddedAllocationSize <= 128) {
+			SubRelease(memory, 128, &allocator->free_128, location, allocator);
+			return;
+		}
+		else if (paddedAllocationSize <= 256) {
+			SubRelease(memory, 256, &allocator->free_256, location, allocator);
+			return;
+		}
+		else if (paddedAllocationSize <= 512) {
+			SubRelease(memory, 512, &allocator->free_512, location, allocator);
+			return;
+		}
+		else if (paddedAllocationSize <= 1024) {
+			SubRelease(memory, 1024, &allocator->free_1024, location, allocator);
+			return;
+		}
+		// TODO: Super allocator free
+	}
 
 	// Clear the bits that where tracking this memory
 	u8* firstMemory = (u8*)allocator;
 	u64 address = (u64)(mem - firstMemory);
 	u32 firstPage = address / PageSize;
-	u32 numPages = size / PageSize + (size % PageSize ? 1 : 0);
+	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
 	ClearRange(allocator, firstPage, numPages);
 
 	// Unlink tracking

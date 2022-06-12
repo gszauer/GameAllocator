@@ -36,6 +36,12 @@ static_assert (sizeof(u64) == 8, "u64 should be defined as an 8 byte type");
 	#define ATLAS_32 1
 #endif
 
+#ifndef ATLAS_32
+#ifndef ATLAS_64
+#error "Unknown platform type. Is this 32 or 64 bit?"
+#endif
+#endif
+
 namespace Memory {
 	struct Allocation {
 		Allocation* prev;
