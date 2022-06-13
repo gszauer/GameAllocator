@@ -1047,5 +1047,9 @@ extern "C" DWORD CALLBACK run() {
 }
 
 int main(int argc, char** argv) {
+	const char* a = "Mary had a little lamb, whose fleece was white";
+	char b[512];
+	memcpy(b, a, strlen(a) + 1);
+
 	return run();
 }
