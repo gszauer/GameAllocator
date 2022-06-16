@@ -10,6 +10,8 @@
 // If set to 1, the allocator will clear memory when allocating it
 #define MEM_CLEAR_ON_ALLOC 0
 
+// ^ TODO: Maybe make these flags on the actual allocator?!?!?!?!
+
 #ifndef ATLAS_U8
 #define ATLAS_U8
 typedef unsigned char u8;
@@ -82,14 +84,12 @@ static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 3
 #define str(a) #a
 #define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
 
-/*
 void* malloc(u32 bytes);
 void free(void* data);
 void memset(void* mem, u8 value, u32 size);
 void memcpy(void* dest, const void* src, u32 size);
 void* calloc(u32 count, u32 size);
 void* realloc(void* mem, u32 size);
-*/
 
 #define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
@@ -98,7 +98,37 @@ void* realloc(void* mem, u32 size);
 #define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 
-// TODO: override new and delete here as well
+namespace std {
+	struct nothrow_t;
+}
+
+// C++ 11: https://cplusplus.com/reference/new/operator%20new/
+void* operator new (decltype(sizeof(0)) size);
+void* operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
+void* operator new (decltype(sizeof(0)) size, void* ptr) noexcept;
+
+// C++ 14: https://cplusplus.com/reference/new/operator%20delete/
+void __cdecl operator delete (void* ptr) noexcept;
+void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
+void __cdecl operator delete (void* ptr, void* voidptr2) noexcept;
+void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size) noexcept;
+void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
+
+// C++ 11: https://cplusplus.com/reference/new/operator%20new[]/
+void* operator new[](decltype(sizeof(0)) size);
+void* operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
+void* operator new[](decltype(sizeof(0)) size, void* ptr) noexcept;
+
+// C++ 14: https://cplusplus.com/reference/new/operator%20delete[]/
+void __cdecl operator delete[](void* ptr) noexcept;
+void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
+void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept;
+void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept;
+void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
+
+// Tracked
+void* operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept;
+#define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 
 
 #if _WIN64

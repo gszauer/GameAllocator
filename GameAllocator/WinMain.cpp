@@ -1021,6 +1021,9 @@ extern "C" DWORD CALLBACK run() {
 	LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	Memory::GlobalAllocator = Memory::Initialize(memory, size);
 
+	int* test = new int;
+	int* test2 = new int[5];
+
 	CreateMemoryWindow();
 
 	MSG msg = { 0 };
@@ -1034,6 +1037,9 @@ extern "C" DWORD CALLBACK run() {
 		}
 		Sleep(1);
 	} while (gMemoryWindow != 0);
+
+	delete test;
+	delete[] test2;
 
 	Memory::Shutdown(Memory::GlobalAllocator);
 	Memory::GlobalAllocator = 0;

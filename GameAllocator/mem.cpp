@@ -1,8 +1,6 @@
 #include "mem.h"
 
-Memory::Allocator* Memory::GlobalAllocator;
-
-
+Memory::Allocator* Memory::GlobalAllocator = 0;
 
 #ifndef ATLAS_U16
 #define ATLAS_U16
@@ -25,7 +23,6 @@ static_assert (sizeof(u64) == 8, "u64 should be defined as an 8 byte type");
 #define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
 #define NotImplementedException() Memory::Assert(false, "Not Implemented", __LINE__, __FILE__)
 #else
-#define assert1(cond) ;
 #define assert(cond, msg) ;
 #define NotImplementedException() ;
 #endif
@@ -304,6 +301,7 @@ namespace Memory {
 
 		block->prev = 0;
 		block->size = blockSize;
+		block->location = location;
 
 		// Track the sub allocator
 		block->next = allocator->active;
@@ -895,7 +893,6 @@ void* Memory::ReAllocate(void* mem, u32 newSize, u32 newAlignment, const char* l
 	return newMem;
 }
 
-/*
 #undef malloc
 #undef free
 #undef memset
@@ -933,4 +930,97 @@ void* realloc(void* mem, u32 size) {
 #define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
 #define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
-*/
+
+#undef new
+
+void* operator new (decltype(sizeof(0)) size) {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new(size_t)", Memory::GlobalAllocator);
+}
+
+void* operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new(size_t, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void* operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Allocate(size, alignment, location, allocator);
+}
+
+void* operator new (decltype(sizeof(0)) size, void* ptr) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return ptr; // Placement new
+}
+
+void __cdecl operator delete (void* ptr) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete(void*)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete(void*, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete(void* memory, const char* location, Memory::Allocator* allocator) {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(memory, location, allocator);
+}
+
+void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete(void*, size_t)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete(void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete (void* ptr, void* voidptr2) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	// No-op
+}
+
+void* operator new[](decltype(sizeof(0)) size) {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new[](size_t)", Memory::GlobalAllocator);
+}
+
+void* operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new[](size_t, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void* operator new[](decltype(sizeof(0)) size, void* ptr) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return ptr; // Placement new
+}
+
+void __cdecl operator delete[](void* ptr) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete[](void*)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete[](void*, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete[](void*, size_t)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	return Memory::Release(ptr, "internal - ::delete[](void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
+}
+
+void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept {
+	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
+	// No-op
+}
+
+#define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
