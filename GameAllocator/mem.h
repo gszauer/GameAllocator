@@ -31,8 +31,8 @@ namespace Memory {
 		u32 alignment;
 	};
 
-	struct Allocator {
-		Allocation* free_64; // I can probably just remove this...
+	struct Allocator { // TODO: The size isn't really special, just add the fast offsets!
+		Allocation* free_64;
 		Allocation* free_128;
 		Allocation* free_256;
 		Allocation* free_512;
@@ -82,17 +82,23 @@ static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 3
 #define str(a) #a
 #define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
 
+/*
+void* malloc(u32 bytes);
+void free(void* data);
+void memset(void* mem, u8 value, u32 size);
+void memcpy(void* dest, const void* src, u32 size);
+void* calloc(u32 count, u32 size);
+void* realloc(void* mem, u32 size);
+*/
+
 #define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
 #define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
 #define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
 #define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
-#define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator);
-//TODO: Probably want to implement these ac C functions in the source file, undef and re-def them
+#define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 
 // TODO: override new and delete here as well
-
-
 
 
 #if _WIN64

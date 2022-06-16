@@ -894,3 +894,43 @@ void* Memory::ReAllocate(void* mem, u32 newSize, u32 newAlignment, const char* l
 
 	return newMem;
 }
+
+/*
+#undef malloc
+#undef free
+#undef memset
+#undef memcpy
+#undef calloc
+#undef realloc
+
+void* malloc(u32 bytes) {
+	return Memory::Allocate(bytes, Memory::DefaultAlignment, "internal - malloc", Memory::GlobalAllocator);
+}
+
+void free(void* data) {
+	return Memory::Release(data, "internal - free", Memory::GlobalAllocator);
+}
+
+void memset(void* mem, u8 value, u32 size) {
+	Memory::Set(mem, value, size, "internal - memset");
+}
+
+void memcpy(void* dest, const void* src, u32 size) {
+	Memory::Copy(dest, src, size, "internal - memcpy");
+}
+
+void* calloc(u32 count, u32 size) {
+	return Memory::AllocateContigous(count, size, Memory::DefaultAlignment, "internal - calloc", Memory::GlobalAllocator);
+}
+
+void* realloc(void* mem, u32 size) {
+	return Memory::ReAllocate(mem, size, Memory::DefaultAlignment, "internal - realloc", Memory::GlobalAllocator);
+}
+
+#define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
+#define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
+#define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
+#define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+*/

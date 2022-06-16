@@ -137,7 +137,7 @@ struct Win32Color {
 	unsigned char b;
 	unsigned char a;
 
-	Win32Color(unsigned char _r, unsigned char _g, unsigned char _b) {
+	void Init(unsigned char _r, unsigned char _g, unsigned char _b) {
 		color = RGB(_r, _g, _b);
 		brush = 0;// CreateSolidBrush(color);
 		r = _r;
@@ -145,7 +145,7 @@ struct Win32Color {
 		b = _b;
 		a = 255;
 	}
-
+	
 	void CreateBrushObject() {
 		Assert(brush == 0);
 		brush = CreateSolidBrush(color);
@@ -154,18 +154,7 @@ struct Win32Color {
 	void DestroyBrushObject() {
 		Assert(brush != 0);
 		DeleteObject(brush);
-		brush = 0; 
-	}
-
-	Win32Color(const Win32Color& other) {
-		Copy(other);
-	}
-
-	Win32Color& operator=(const Win32Color& other) {
-		if (&other != this) {
-			Copy(other);
-		}
-		return *this;
+		brush = 0;
 	}
 
 	void Copy(const Win32Color& other) {
@@ -183,10 +172,6 @@ struct Win32Color {
 		g = other.g;
 		b = other.b;
 		a = 255;
-	}
-
-	~Win32Color() {
-		Assert(brush == 0);
 	}
 };
 
@@ -275,6 +260,7 @@ struct Win32WindowLayout {
 		COPY_RECT(bottomCenterArea, _bottomCenter);
 	}
 };
+
 
 void SetWindowLayout(const Win32WindowLayout& layout, HWND chart, HWND* labels, HWND list, HWND* buttons,HWND upDown, HWND upDownEdit, HWND combo) {
 	MemoryDebugInfo memInfo(Memory::GlobalAllocator);
@@ -544,14 +530,19 @@ Win32WindowLayout GetWindowLayout(HWND hwnd) {
 }
 
 LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
-	static Win32Color bgColor(30, 30, 30);
 	// Great orange: (255, 125, 64);
-	static Win32Color freeMemoryColor(110, 110, 220);
-	static Win32Color usedMemoryColor(110, 240, 110);
-	static Win32Color trackMemoryColor(255, 110, 110);
+	static Win32Color bgColor = { 0 };
+	static Win32Color freeMemoryColor = { 0 };
+	static Win32Color usedMemoryColor = { 0 };
+	static Win32Color trackMemoryColor = { 0 };
 
 	switch (iMsg) {
 	case WM_CREATE:
+		freeMemoryColor.Init(110, 110, 220);
+		usedMemoryColor.Init(110, 240, 110);
+		trackMemoryColor.Init(255, 110, 110);
+		bgColor.Init(30, 30, 30);
+
 		bgColor.CreateBrushObject();
 		freeMemoryColor.CreateBrushObject();
 		usedMemoryColor.CreateBrushObject();
@@ -743,7 +734,6 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 		}
 		return 0;
 	}
-
 	return DefWindowProc(hwnd, iMsg, wParam, lParam);
 }
 
@@ -752,7 +742,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		Assert(gMemoryWindow != 0);
 	}
 
-	static Win32Color bgColor(30, 30, 30);
+	static Win32Color bgColor = { 0 };
 	static HWND hwndChart = 0;
 	static HWND hwndLabels[9] = { 0 };
 	static HWND hwndList = 0;
@@ -761,14 +751,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	static HWND hwndUpDownEdit = { 0 };
 	static HWND hwndCombo = { 0 };
 
-	static Win32Color boxColor(50, 50, 50);
-	static Win32Color textColor(220, 220, 220);
-	static Win32Color freeMemoryColor(110, 110, 220);
-	static Win32Color usedMemoryColor(110, 240, 110);
-	static Win32Color trackMemoryColor(255, 110, 110);
+	static Win32Color boxColor = { 0 };
+	static Win32Color textColor = { 0 };
+	static Win32Color freeMemoryColor = { 0 };
+	static Win32Color usedMemoryColor = { 0 };
+	static Win32Color trackMemoryColor = { 0 };
 
 	switch (iMsg) {
 	case WM_NCCREATE:
+		bgColor.Init(30, 30, 30);
+		boxColor.Init(50, 50, 50);
+		textColor.Init(220, 220, 220);
+		freeMemoryColor.Init(110, 110, 220);
+		usedMemoryColor.Init(110, 240, 110);
+		trackMemoryColor.Init(255, 110, 110);
+
 		Assert(gMemoryWindow == 0);
 		gMemoryWindow = hwnd;
 		break;
@@ -1018,7 +1015,6 @@ void CreateMemoryWindow() {
 	UpdateWindow(gMemoryWindow);
 }
 
-// https ://stackoverflow.com/questions/58513890/how-to-create-minimal-win32-c-program-with-no-windows-apis-in-import-table-with
 extern "C" DWORD CALLBACK run() {
 	unsigned int size = MB(512);
 
@@ -1044,12 +1040,4 @@ extern "C" DWORD CALLBACK run() {
 	VirtualFree(memory, 0, MEM_RELEASE);
 
 	return 0;
-}
-
-int main(int argc, char** argv) {
-	const char* a = "Mary had a little lamb, whose fleece was white";
-	char b[512];
-	memcpy(b, a, strlen(a) + 1);
-
-	return run();
 }
