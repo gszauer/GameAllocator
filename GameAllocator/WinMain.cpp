@@ -202,7 +202,6 @@ struct FrameBuffer { // For double buffered window
 
 		int bitmapMemorySize = (Width * Height) * 4;
 		Memory = (unsigned char*)VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
-		memset(Memory, 0, bitmapMemorySize);
 	}
 
 	void Destroy() {

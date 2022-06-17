@@ -133,26 +133,26 @@ namespace std {
 }
 
 // C++ 11: https://cplusplus.com/reference/new/operator%20new/
-void* operator new (decltype(sizeof(0)) size);
-void* operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
-void* operator new (decltype(sizeof(0)) size, void* ptr) noexcept;
+void* __cdecl operator new (decltype(sizeof(0)) size);
+void* __cdecl operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
+// void* __cdecl operator new (decltype(sizeof(0)) size, void* ptr) noexcept; Can't overload placement new
 
 // C++ 14: https://cplusplus.com/reference/new/operator%20delete/
 void __cdecl operator delete (void* ptr) noexcept;
 void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-void __cdecl operator delete (void* ptr, void* voidptr2) noexcept;
+// void __cdecl operator delete (void* ptr, void* voidptr2) noexcept; // Can't overload placement delete
 void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size) noexcept;
 void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
 
 // C++ 11: https://cplusplus.com/reference/new/operator%20new[]/
-void* operator new[](decltype(sizeof(0)) size);
-void* operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
-void* operator new[](decltype(sizeof(0)) size, void* ptr) noexcept;
+void* __cdecl operator new[](decltype(sizeof(0)) size);
+void* __cdecl operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
+// void* __cdecl operator new[](decltype(sizeof(0)) size, void* ptr) noexcept; // Can't overload placement new
 
 // C++ 14: https://cplusplus.com/reference/new/operator%20delete[]/
 void __cdecl operator delete[](void* ptr) noexcept;
 void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept;
+// void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept; // Can't overload placement delete
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept;
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
 
@@ -162,10 +162,10 @@ namespace Memory {
 	struct stl_identity {
 		typedef T type;
 	};
-	template<typename T>
-	T&& stl_forward(typename stl_identity<T>::type&& param)
-	{
-		return static_cast<stl_identity<T>::type&&>(param);
+
+	template <typename T>
+	T&& stl_forward(typename stl_identity<T>::type& param) {
+		return static_cast<T&&>(param);
 	}
 
 	template<typename T>
@@ -214,7 +214,7 @@ namespace Memory {
 
 		/// Allocate n elements of type T
 		inline pointer allocate(size_type n, const void* hint = 0) {
-			return Allocate(n, DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
+			return (pointer)Allocate(n, DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
 		}
 
 		/// Free memory of pointer p
