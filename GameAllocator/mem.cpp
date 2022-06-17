@@ -8,17 +8,6 @@ typedef unsigned short u16;
 static_assert (sizeof(u16) == 2, "u16 should be defined as a 2 byte type");
 #endif 
 
-#ifndef ATLAS_U64
-#define ATLAS_U64
-typedef unsigned long long u64;
-static_assert (sizeof(u64) == 8, "u64 should be defined as an 8 byte type");
-#endif
-
-// https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
-#define xstr(a) str(a)
-#define str(a) #a
-#define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
-
 #if _DEBUG
 #define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
 #define NotImplementedException() Memory::Assert(false, "Not Implemented", __LINE__, __FILE__)

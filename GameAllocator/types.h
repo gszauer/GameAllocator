@@ -61,30 +61,44 @@ static_assert (sizeof(f64) == 8, "f64 should be defined as a 8 byte type");
 #endif
 
 #if _WIN64
-#ifdef ATLAS_32
-#error Can't define both 32 and 64 bit system
-#endif
-#define ATLAS_64 1
+	#ifdef ATLAS_32
+		#error Can't define both 32 and 64 bit system
+	#endif
+	#define ATLAS_64 1
 #elif _WIN32
-#ifdef ATLAS_64
-#error Can't define both 32 and 64 bit system
-#endif
-#define ATLAS_32 1
+	#ifdef ATLAS_64
+		#error Can't define both 32 and 64 bit system
+	#endif
+	#define ATLAS_32 1
 #endif
 
-#ifndef ATLAS_32
-#ifndef ATLAS_64
-#error "Unknown platform type. Is this 32 or 64 bit?"
+#ifndef ATLAS_PTR
+	#define ATLAS_PTR
+	#if ATLAS_64
+		typedef u64 ptr_type;
+		static_assert (sizeof(ptr_type) == 8, "ptr_type should be defined as an 8 byte type on a 64 bit system");
+	#elif ATLAS_32
+		typedef u32 ptr_type;
+		static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
+	#else
+		#error "Invalid platform"
+	#endif
 #endif
+
+// TODO: Add 32 bit support
+#ifndef ATLAS_32
+	#ifndef ATLAS_64
+		#error "Unknown platform type. Is this 32 or 64 bit?"
+	#endif
 #endif
 
 #if ATLAS_64
-static_assert (sizeof(void*) == 8, "Not on a 64 bit system");
+	static_assert (sizeof(void*) == 8, "Not on a 64 bit system");
 #else
-#error "Unknown platform type."
+	#error "Unknown platform type."
 #endif
 
 // https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
-#define xstr(a) str(a)
-#define str(a) #a
-#define __LOCATION__ "On line: " xstr(__LINE__) ", in file: " __FILE__
+#define atlas_xstr(a) atlas_str(a)
+#define atlas_str(a) #a
+#define __LOCATION__ "On line: " atlas_xstr(__LINE__) ", in file: " __FILE__
