@@ -25,6 +25,9 @@
 // If set to 1, the Memroy::STLAllocator class is defined 
 #define MEM_IMPLEMENT_STL 1
 
+// Disables sub-allocators if defined
+#define MEM_USE_SUBALLOCATORS 1
+
 #ifndef ATLAS_U8
 #define ATLAS_U8
 typedef unsigned char u8;
@@ -67,8 +70,6 @@ static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #define ATLAS_32 1
 #endif
 
-
-
 namespace Memory {
 	struct Allocation {
 		Allocation* prev;
@@ -95,13 +96,13 @@ namespace Memory {
 		Allocation* free_2048;
 
 		Allocation* active;
-		u32 size;
+		u32 size; // In bytes, how big is the allocator
 		u32 requested;
 		u32 offsetToAllocatable;
 		u32 scanBit;
 
 #if ATLAS_32
-		u32 unused[8];
+		u32 unused[7];
 #endif
 	};
 
@@ -274,11 +275,21 @@ namespace Memory {
 
 		/// Allocate n elements of type T
 		inline pointer allocate(size_type n, const void* hint = 0) {
+#if _DEBUG
+			if (GlobalAllocator == 0) { // Poor mans assert
+				char* data = (char*)((void*)0) = '\0';
+			}
+#endif
 			return (pointer)Allocate(n, DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
 		}
 
 		/// Free memory of pointer p
 		inline void deallocate(void* p, size_type n) {
+#if _DEBUG
+			if (GlobalAllocator == 0) { // Poor mans assert
+				char* data = (char*)((void*)0) = '\0';
+			}
+#endif
 			Release(p, "STLAllocator::deallocate", GlobalAllocator);
 		}
 
@@ -306,7 +317,12 @@ namespace Memory {
 
 		/// Get the max allocation size
 		inline size_type max_size() const {
-			return ~size_type(0);
+#if _DEBUG
+			if (GlobalAllocator == 0) { // Poor mans assert
+				char* data = (char*)((void*)0) = '\0';
+			}
+#endif
+			return size_type(-1);
 		}
 
 		/// A struct to rebind the allocator to another allocator of type U
