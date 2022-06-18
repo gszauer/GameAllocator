@@ -217,7 +217,8 @@ namespace Memory {
 		}
 	}
 
-	void* SubAllocate(u32 blockSize, Allocation** freeList, const char* location, Allocator* allocator) {
+	void* SubAllocate(u32 requestedBytes, u32 blockSize, Allocation** freeList, const char* location, Allocator* allocator) {
+		assert(blockSize < PageSize, "Block size must be less than page size");
 		// Sub allocators are always aligned with the Default Alignment. If we didn't do this, we would
 		// have to keep a matrix of block size and alignment, which is too much overhead.
 		
@@ -265,6 +266,7 @@ namespace Memory {
 				alloc->size = 0;
 				alloc->next = *freeList;
 				alloc->alignment = DefaultAlignment;
+				assert(alloc->alignment != 0, "SubAllocate, alignment can't be 0");
 				alloc->location = location;
 
 				assert(((sizeof(Allocation) % DefaultAlignment) == 0), "Sub allocator is not aligned with default alignment");
@@ -281,7 +283,7 @@ namespace Memory {
 		// Advance the free list, we're going to be using this one.
 		Allocation* block = *freeList;
 #if MEM_CLEAR_ON_ALLOC
-		Set(block, 0, blockSize, location);
+		Set((u8*)block + sizeof(Allocation), 0, blockSize - sizeof(Allocation), location);
 #endif
 		if ((*freeList)->next != 0) {
 			(*freeList)->next->prev = 0;
@@ -289,7 +291,7 @@ namespace Memory {
 		*freeList = (*freeList)->next;
 
 		block->prev = 0;
-		block->size = blockSize;
+		block->size = requestedBytes;
 		block->location = location;
 
 		// Track the sub allocator
@@ -484,6 +486,7 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 	allocator->offsetToAllocatable = metaDataSizeBytes;
 	allocator->scanBit = 0;
 	SetRange(allocator, 0, numberOfMasksUsed);
+	allocator->requested = 0;
 
 #if _DEBUG
 	{
@@ -532,6 +535,7 @@ void Memory::Shutdown(Allocator* allocator) {
 	}
 	metaDataSizeBytes = numberOfMasksUsed * PageSize;
 	ClearRange(allocator, 0, numberOfMasksUsed);
+	assert(allocator->requested == 0, "Memory::Shutdown, not all memory has been released");
 
 	assert(allocator->active == 0, "There are active allocations in Memory::Shutdown, leaking memory");
 	assert(allocator->free_64 == 0, "Free list is not empty in Memory::Shutdown, leaking memory");
@@ -733,24 +737,25 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	u32 numPagesRequested = allocationSize / PageSize + (allocationSize % PageSize ? 1 : 0);
 	assert(numPagesRequested > 0, "Memory::Allocate needs to request at least 1 page");
 	
+	allocator->requested += bytes;
 	if (alignment == DefaultAlignment) {
 		if (allocationSize <= 64) {
-			return SubAllocate(64, &allocator->free_64, location, allocator);
+			return SubAllocate(bytes, 64, &allocator->free_64, location, allocator);
 		}
 		else if (allocationSize <= 128) {
-			return SubAllocate(128, &allocator->free_128, location, allocator);
+			return SubAllocate(bytes, 128, &allocator->free_128, location, allocator);
 		}
 		else if (allocationSize <= 256) {
-			return SubAllocate(256, &allocator->free_256, location, allocator);
+			return SubAllocate(bytes, 256, &allocator->free_256, location, allocator);
 		}
 		else if (allocationSize <= 512) {
-			return SubAllocate(512, &allocator->free_512, location, allocator);
+			return SubAllocate(bytes, 512, &allocator->free_512, location, allocator);
 		}
 		else if (allocationSize <= 1024) {
-			return SubAllocate(1024, &allocator->free_1024, location, allocator);
+			return SubAllocate(bytes, 1024, &allocator->free_1024, location, allocator);
 		}
 		else if (allocationSize <= 2048) {
-			return SubAllocate(2048, &allocator->free_2048, location, allocator);
+			return SubAllocate(bytes, 2048, &allocator->free_2048, location, allocator);
 		}
 	}
 
@@ -774,7 +779,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	Allocation* allocation = (Allocation*)mem;
 
 	allocation->alignment = alignment;
-	allocation->size = allocationSize;
+	allocation->size = bytes;
 	allocation->location = location;
 	allocation->prev = 0;
 	allocation->next = 0;
@@ -809,13 +814,15 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	mem -= sizeof(Allocation);
 	Allocation* allocation = (Allocation*)mem;
 	u32 alignment = allocation->alignment;
-	u32 paddedAllocationSize = allocation->size;
+	assert(alignment != 0, "Memory::Free, bad alignment, probably bad memory");
+	
+	u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
+	u32 paddedAllocationSize = allocation->size + allocationHeaderPadding + sizeof(Allocation);
 	assert(allocation->size != 0, "Memory::Free, double free");
 
-	// Figure out how much to step back to the start of the allocation page & 
-	// Step back to the start of the allocation
-	u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
+
 	mem -= allocationHeaderPadding;
+	allocator->requested -= allocation->size;
 
 	if (alignment == DefaultAlignment) {
 		if (paddedAllocationSize <= 64) {

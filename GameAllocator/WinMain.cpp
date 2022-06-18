@@ -289,14 +289,28 @@ void SetWindowLayout(const Win32WindowLayout& layout, HWND chart, HWND* labels, 
 	wchar_t displaybuffer[1024];
 
 	int kib = allocator->size / 1024;
-	int mib = kib / 1024 + (kib % 1024 ? 1 : 0);
-	kib = allocator->size / 1024 + (allocator->size % 1024 ? 1 : 0);
+	int mib = kib / 1024;// +(kib % 1024 ? 1 : 0);
+	//kib = allocator->size / 1024 + (allocator->size % 1024 ? 1 : 0);
 
 	wsprintfW(displaybuffer, L"Tracking %d Pages, %d KiB (%d MiB)", memInfo.NumberOfPages, kib, mib); // Removed with %.2f %% overhead
 	SetWindowText(labels[0], displaybuffer);
 
 	wsprintfW(displaybuffer, L"Pages: %d free, %d used, %d overhead", memInfo.NumFreePages, memInfo.NumUsedPages, memInfo.NumOverheadPages);
 	SetWindowText(labels[1], displaybuffer);
+
+	kib = allocator->requested / 1024;
+	mib = kib / 1024;// + (kib % 1024 ? 1 : 0);
+	//kib = allocator->requested / 1024 + (allocator->requested % 1024 ? 1 : 0);
+
+	wsprintfW(displaybuffer, L"Requested: %d bytes (~%d MiB)", allocator->requested, mib);
+	SetWindowText(labels[2], displaybuffer);
+
+	kib = (memInfo.NumUsedPages * Memory::PageSize) / 1024;
+	mib = kib / 1024;// +(kib % 1024 ? 1 : 0);
+	// kib = (memInfo.NumUsedPages * Memory::PageSize) / 1024 + ((memInfo.NumUsedPages * Memory::PageSize) % 1024 ? 1 : 0);
+
+	wsprintfW(displaybuffer, L"Served: %d bytes (~%d MiB)", memInfo.NumUsedPages * Memory::PageSize, mib);
+	SetWindowText(labels[3], displaybuffer);
 
 	SetWindowPos(list, 0, layout.bottomCenterArea.left, layout.bottomCenterArea.top, layout.bottomCenterArea.right - layout.bottomCenterArea.left, layout.bottomCenterArea.bottom - layout.bottomCenterArea.top, /*SWP_NOZORDER*/0);
 
@@ -356,8 +370,10 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 			len += 1;
 		}
 
-		u32 pages = iter->size / Memory::PageSize + (iter->size % Memory::PageSize ? 1 : 0);
-		wsprintfW(displaybuffer, L"Size: %d bytes, Pages: %d, >", iter->size, pages);
+		u32 allocationHeaderPadding = sizeof(Memory::Allocation) % iter->alignment > 0 ? iter->alignment - sizeof(Memory::Allocation) % iter->alignment : 0;
+		u32 paddedSize = iter->size + sizeof(Memory::Allocation) + allocationHeaderPadding;
+		u32 pages = paddedSize / Memory::PageSize + (paddedSize % Memory::PageSize ? 1 : 0);
+		wsprintfW(displaybuffer, L"Size: %d/%d bytes, Pages: %d, >", iter->size, paddedSize, pages);
 		wchar_t* print_to = displaybuffer;
 		while (*print_to != L'>') {
 			print_to++;

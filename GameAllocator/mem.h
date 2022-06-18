@@ -8,7 +8,7 @@
 #define MEM_FIRST_FIT 0
 
 // If set to 1, the allocator will clear memory when allocating it
-#define MEM_CLEAR_ON_ALLOC 0
+#define MEM_CLEAR_ON_ALLOC 1
 
 // If set to 1, "C" functions for malloc, free, etc are provided. 
 #define MEM_IMPLEMENT_MALLOC 1
@@ -24,7 +24,6 @@
 
 // If set to 1, the Memroy::STLAllocator class is defined 
 #define MEM_IMPLEMENT_STL 1
-
 
 #ifndef ATLAS_U8
 #define ATLAS_U8
@@ -50,39 +49,38 @@ typedef unsigned long long u64;
 static_assert (sizeof(u64) == 8, "u64 should be defined as an 8 byte type");
 #endif
 
-#if _WIN64
-	#ifdef ATLAS_32
-		#error Can't define both 32 and 64 bit system
-	#endif
-	#define ATLAS_64 1
-#elif _WIN32
-	#ifdef ATLAS_64
-		#error Can't define both 32 and 64 bit system
-	#endif
-	#define ATLAS_32 1
+#ifndef ATLAS_I64
+#define ATLAS_I64
+typedef long long i64;
+static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #endif
 
-#ifndef ATLAS_PTR
-	#define ATLAS_PTR
-	#if ATLAS_64
-		typedef u64 ptr_type;
-		static_assert (sizeof(ptr_type) == 8, "ptr_type should be defined as an 8 byte type on a 64 bit system");
-	#elif ATLAS_32
-		typedef u32 ptr_type;
-		static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
-	#else
-		#error "Invalid platform"
-	#endif
+#if _WIN64
+#ifdef ATLAS_32
+#error Can't define both 32 and 64 bit system
 #endif
+#define ATLAS_64 1
+#elif _WIN32
+#ifdef ATLAS_64
+#error Can't define both 32 and 64 bit system
+#endif
+#define ATLAS_32 1
+#endif
+
+
 
 namespace Memory {
 	struct Allocation {
 		Allocation* prev;
 		Allocation* next;
 		const char* location;
-		u32 size;
+		u32 size; // Unpadded allocation size. total size is size + sizeof(Allocation) + paddingof(Allocation)
 		u32 alignment;
 
+		/* To get the actual allocation size:
+		u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
+		u32 paddedSize = size + sizeof(Memory::Allocation) + allocationHeaderPadding;
+		*/
 #if ATLAS_32
 		u32 unused[3];
 #endif
@@ -98,16 +96,15 @@ namespace Memory {
 
 		Allocation* active;
 		u32 size;
+		u32 requested;
 		u32 offsetToAllocatable;
 		u32 scanBit;
 
 #if ATLAS_32
 		u32 unused[8];
-#elif ATLAS_64
-		u32 unused;
 #endif
 	};
-	
+
 	extern Allocator* GlobalAllocator;
 	const u32 DefaultAlignment = 4;
 	const u32 PageSize = 4096;
@@ -116,7 +113,7 @@ namespace Memory {
 	// You can call AlignAndTrim before Initialize to make sure that memory is aligned to DefaultAlignment
 	// and to make sure that the size of the memory (after it's been aligned) is a multiple of PageSize
 	// both arguments are modified, the return value is how many bytes where removed
-	u32 AlignAndTrim(void** memory, u32* size); 
+	u32 AlignAndTrim(void** memory, u32* size);
 
 	Allocator* Initialize(void* memory, u32 bytes);
 	void Shutdown(Allocator* allocator);
@@ -127,7 +124,7 @@ namespace Memory {
 	void* Allocate(u32 bytes, u32 alignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 	void Release(void* memory, const char* location = 0, Allocator* allocator = 0);
 
-	void Set(void* memory, u8 value, u32 size, const char* location = 0); 
+	void Set(void* memory, u8 value, u32 size, const char* location = 0);
 	void Copy(void* dest, const void* source, u32 size, const char* location = 0);
 
 	void* AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
@@ -204,6 +201,23 @@ void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::n
 
 #if MEM_IMPLEMENT_STL
 namespace Memory {
+#ifndef ATLAS_PTR
+#define ATLAS_PTR
+#if ATLAS_64
+	typedef u64 ptr_type;
+	typedef i64 diff_type;
+	static_assert (sizeof(ptr_type) == 8, "ptr_type should be defined as an 8 byte type on a 64 bit system");
+	static_assert (sizeof(diff_type) == 8, "diff_type should be defined as an 8 byte type on a 64 bit system");
+#elif ATLAS_32
+	typedef u32 ptr_type;
+	typedef i32 diff_type;
+	static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
+	static_assert (sizeof(diff_type) == 4, "diff_type should be defined as a 4 byte type on a 32 bit system");
+#else
+#error "Invalid platform"
+#endif
+#endif
+
 	template<typename T>
 	struct stl_identity {
 		typedef T type;
@@ -218,7 +232,7 @@ namespace Memory {
 	class STLAllocator {
 	public:
 		typedef ptr_type size_type;
-		typedef ptr_type difference_type;
+		typedef diff_type difference_type;
 		typedef T* pointer;
 		typedef const T* const_pointer;
 		typedef T& reference;
@@ -292,7 +306,7 @@ namespace Memory {
 
 		/// Get the max allocation size
 		inline size_type max_size() const {
-			return size_type(-1);
+			return ~size_type(0);
 		}
 
 		/// A struct to rebind the allocator to another allocator of type U
@@ -309,19 +323,19 @@ namespace Memory {
 #endif
 
 #if _WIN64
-	#ifdef ATLAS_32
-		#error Can't define both 32 and 64 bit system
-	#endif
-	#define ATLAS_64 1
+#ifdef ATLAS_32
+#error Can't define both 32 and 64 bit system
+#endif
+#define ATLAS_64 1
 #elif _WIN32
-	#ifdef ATLAS_64
-		#error Can't define both 32 and 64 bit system
-	#endif
-	#define ATLAS_32 1
+#ifdef ATLAS_64
+#error Can't define both 32 and 64 bit system
+#endif
+#define ATLAS_32 1
 #endif
 
 #ifndef ATLAS_32
-	#ifndef ATLAS_64
-		#error "Unknown platform type. Is this 32 or 64 bit?"
-	#endif
+#ifndef ATLAS_64
+#error "Unknown platform type. Is this 32 or 64 bit?"
+#endif
 #endif
