@@ -89,7 +89,8 @@ namespace Memory {
 		assert(numPages != 0, "");
 
 		u32 * mask = (u32*)AllocatorPageMask(allocator);
-		u32 numBitsInMask = allocator->size / PageSize;
+		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
+		assert(allocator->size / PageSize == numBitsInMask, "< this was the old way of calculating numBitsInMask. I like the above new way better");
 		assert(allocator->size % PageSize == 0, "Memory::FindRange, the allocators size must be a multiple of Memory::PageSize, otherwise there would be a partial page at the end");
 		assert(mask != 0, "");
 		assert(numBitsInMask != 0, "");
@@ -155,6 +156,7 @@ namespace Memory {
 		assert(numBits == numPages, "Memory::FindRange Could not find enough memory to fufill request");
 		assert(startBit != 0, "Memory::FindRange Could not memory fufill request");
 		if (numBits != numPages || startBit == 0 || allocator->size % PageSize != 0) {
+			assert(false, "");
 			return 0;
 		}
 
@@ -170,7 +172,8 @@ namespace Memory {
 		assert(mask != 0, "");
 
 #if _DEBUG
-		u32 numBitsInMask = allocator->size / PageSize;
+		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
+		assert(allocator->size / PageSize == numBitsInMask, "< this was the old way of calculating numBitsInMask. I like the above new way better");
 		assert(numBitsInMask != 0, "");
 #endif
 
@@ -198,7 +201,8 @@ namespace Memory {
 		assert(mask != 0, "");
 
 #if _DEBUG
-		u32 numBitsInMask = allocator->size / PageSize;
+		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
+		assert(allocator->size / PageSize == numBitsInMask, "< this was the old way of calculating numBitsInMask. I like the above new way better");
 		assert(numBitsInMask != 0, "");
 #endif
 
@@ -237,6 +241,7 @@ namespace Memory {
 
 		// There is no blocks of the requested size available. Reserve 1 page, and carve it up into blocks.
 		// Add every new block to the free list.
+		bool grabNewPage = *freeList == 0;
 		if (*freeList == 0) {
 			// Find and reserve 1 free page
 #if MEM_FIRST_FIT
@@ -307,6 +312,15 @@ namespace Memory {
 		u32 freeListcount = 0;
 		for (Allocation* iter = *freeList; iter != 0; iter = iter->next, freeListcount += 1);
 #endif
+
+		if (allocator->allocateCallback != 0) {
+#if ATLAS_64
+			u64 firstPage = (u64)(((u8*)block - AllocatorAllocatable(allocator)) / PageSize);
+#elif ATLAS_32
+			u32 firstPage = (u32)(((u8*)block - AllocatorAllocatable(allocator)) / PageSize);
+#endif
+			allocator->allocateCallback(block, requestedBytes, blockSize, firstPage, grabNewPage? 1 : 0);
+		}
 
 		// Memory always follows the header
 		return (u8*)block + sizeof(Allocation);
@@ -379,6 +393,10 @@ namespace Memory {
 			mem += blockSize;
 		}
 
+		if (allocator->releaseCallback != 0) {
+			allocator->releaseCallback(header, header->size, blockSize, startPage, releasePage? 1 : 0);
+		}
+
 		// If appropriate, release entire page
 		if (releasePage) {
 			// Remove from free list
@@ -415,27 +433,6 @@ namespace Memory {
 		}
 	}
 #endif
-
-	static inline void Zero(Allocation& alloc) {
-		alloc.prev = 0;
-		alloc.next = 0;
-		alloc.location = 0;
-		alloc.size = 0;
-		alloc.alignment = 0;
-	}
-
-	static inline void Zero(Allocator& alloc) {
-		alloc.free_64 = 0;
-		alloc.free_128 = 0;
-		alloc.free_256 = 0;
-		alloc.free_512 = 0;
-		alloc.free_1024 = 0;
-		alloc.free_2048 = 0;
-		alloc.active = 0;
-		alloc.size = 0;
-		alloc.offsetToAllocatable = 0;
-		alloc.scanBit = 0;
-	}
 }
 
 static_assert (Memory::TrackingUnitSize % 8 == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
@@ -484,7 +481,7 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 
 	// Set up the global allocator
 	Allocator* allocator = (Allocator*)memory;
-	Zero(*allocator);
+	Set(allocator, 0, sizeof(allocator), "Memory::Initialize");
 	allocator->size = bytes;
 
 	// Set up the mask that will track our allocation data
@@ -523,6 +520,7 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 
 
 	if (ptr % DefaultAlignment != 0 || bytes % PageSize != 0 || bytes / PageSize < 10) {
+		assert(false, "");
 		return 0;
 	}
 	
@@ -728,12 +726,14 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	assert(bytes != 0, "Memory::Allocate can't allocate 0 bytes");
 	assert(alignment != 0, "Memory::Allocate alignment can't be 0 bytes");
 	if (bytes == 0 || alignment == 0) {
+		assert(false, "");
 		return 0;
 	}
 	if (allocator == 0) {
 		allocator = GlobalAllocator;
 		assert(allocator != 0, "Memory::Allocate couldn't assign global allocator");
 		if (allocator == 0) {
+			assert(false, "");
 			return 0;
 		}
 	}
@@ -790,14 +790,23 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	allocator->scanBit = firstPage + numPagesRequested;
 #endif
 	assert(firstPage != 0, "Memory::Allocate failed to find enough pages to fufill allocation");
+
+	if (allocator->allocateCallback != 0) {
+		u8* _mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
+		_mem += allocationHeaderPadding;
+		Allocation* _allocation = (Allocation*)_mem;
+		allocator->allocateCallback(_allocation, bytes, allocationSize, firstPage, numPagesRequested);
+	}
+
 	SetRange(allocator, firstPage, numPagesRequested);
 
 	if (firstPage == 0 || allocator->size % PageSize != 0) {
+		assert(false, "");
 		return 0; // Fail this allocation in release mode
 	}
 	
 	// Fill out header
-	u8* mem = (u8*)allocator + firstPage * PageSize;
+	u8* mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
 	mem += allocationHeaderPadding;
 	Allocation* allocation = (Allocation*)mem;
 
@@ -811,6 +820,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	assert(allocation != allocator->active, ""); // Should be impossible, but we could have bugs...
 	if (allocator->active != 0) {
 		allocation->next = allocator->active;
+		assert(allocator->active->prev == 0, "");
 		allocator->active->prev = allocation;
 	}
 	allocator->active = allocation;
@@ -877,7 +887,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 #endif
 
 	// Clear the bits that where tracking this memory
-	u8* firstMemory = (u8*)allocator;
+	u8* firstMemory = Memory::AllocatorAllocatable(allocator);
 #if ATLAS_64
 	u64 address = (u64)(mem - firstMemory);
 #elif ATLAS_32
@@ -885,6 +895,9 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 #endif
 	u32 firstPage = address / PageSize;
 	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
+	if (allocator->releaseCallback != 0) {
+		allocator->releaseCallback(allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
+	}
 	ClearRange(allocator, firstPage, numPages);
 
 	// Unlink tracking
@@ -909,6 +922,7 @@ void* Memory::AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment, con
 	}
 	void* mem = Allocate(num_elems * elem_size, alignment, location, allocator);
 	if (mem == 0) {
+		assert(false, "");
 		return 0;
 	}
 	Set(mem, num_elems * elem_size, 0, location);

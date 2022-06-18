@@ -71,6 +71,9 @@ static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #endif
 
 namespace Memory {
+	typedef void (*AllocationCallback)(void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+	typedef void (*ReleaseCallback)(void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+
 	struct Allocation {
 		Allocation* prev;
 		Allocation* next;
@@ -83,7 +86,7 @@ namespace Memory {
 		u32 paddedSize = size + sizeof(Memory::Allocation) + allocationHeaderPadding;
 		*/
 #if ATLAS_32
-		u32 unused[3];
+		u32 padding_32bit[3];
 #endif
 	};
 
@@ -95,6 +98,9 @@ namespace Memory {
 		Allocation* free_1024;
 		Allocation* free_2048;
 
+		AllocationCallback allocateCallback;
+		ReleaseCallback releaseCallback;
+
 		Allocation* active;
 		u32 size; // In bytes, how big is the allocator
 		u32 requested;
@@ -102,7 +108,7 @@ namespace Memory {
 		u32 scanBit;
 
 #if ATLAS_32
-		u32 unused[7];
+		u32 padding_32bit[9];
 #endif
 	};
 
@@ -132,7 +138,7 @@ namespace Memory {
 	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 }
 
-static_assert (sizeof(Memory::Allocator) == 72, "Memory::Allocator should be 72 bytes (576 bits)");
+static_assert (sizeof(Memory::Allocator) == 88, "Memory::Allocator should be 72 bytes (704 bits)");
 static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 32 bytes (256 bits)");
 
 // https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
@@ -277,7 +283,7 @@ namespace Memory {
 		inline pointer allocate(size_type n, const void* hint = 0) {
 #if _DEBUG
 			if (GlobalAllocator == 0) { // Poor mans assert
-				char* data = (char*)((void*)0) = '\0';
+				*(char*)((void*)0) = '\0';
 			}
 #endif
 			return (pointer)Allocate(n, DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
@@ -287,7 +293,7 @@ namespace Memory {
 		inline void deallocate(void* p, size_type n) {
 #if _DEBUG
 			if (GlobalAllocator == 0) { // Poor mans assert
-				char* data = (char*)((void*)0) = '\0';
+				*(char*)((void*)0) = '\0';
 			}
 #endif
 			Release(p, "STLAllocator::deallocate", GlobalAllocator);
@@ -319,10 +325,11 @@ namespace Memory {
 		inline size_type max_size() const {
 #if _DEBUG
 			if (GlobalAllocator == 0) { // Poor mans assert
-				char* data = (char*)((void*)0) = '\0';
+				*(char*)((void*)0) = '\0';
 			}
 #endif
-			return size_type(-1);
+			//return size_type(-1);
+			return GlobalAllocator->size - GlobalAllocator->offsetToAllocatable;
 		}
 
 		/// A struct to rebind the allocator to another allocator of type U
