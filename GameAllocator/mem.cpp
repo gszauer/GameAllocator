@@ -265,7 +265,8 @@ namespace Memory {
 			allocator->scanBit = page + 1;
 #endif
 			SetRange(allocator, page, 1);
-			
+			allocator->numPagesUsed += 1;
+
 			// Zero out the pages memory
 			u8* mem = AllocatorAllocatable(allocator);
 			mem += PageSize * page;
@@ -407,10 +408,6 @@ namespace Memory {
 			mem += blockSize;
 		}
 
-		if (allocator->releaseCallback != 0) {
-			allocator->releaseCallback(allocator, header, header->size, blockSize, startPage, releasePage? 1 : 0);
-		}
-
 		// If appropriate, release entire page
 		if (releasePage) {
 			// Remove from free list
@@ -444,6 +441,12 @@ namespace Memory {
 			// Clear the tracking bits
 			assert(startPage > 0, "");
 			ClearRange(allocator, startPage, 1);
+			assert(allocator->numPagesUsed >= 1, "");
+			allocator->numPagesUsed -= 1;
+		}
+
+		if (allocator->releaseCallback != 0) {
+			allocator->releaseCallback(allocator, header, header->size, blockSize, startPage, releasePage ? 1 : 0);
 		}
 	}
 #endif
@@ -806,14 +809,14 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 #endif
 	assert(firstPage != 0, "Memory::Allocate failed to find enough pages to fufill allocation");
 
+	SetRange(allocator, firstPage, numPagesRequested);
+
 	if (allocator->allocateCallback != 0) {
 		u8* _mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
 		_mem += allocationHeaderPadding;
 		Allocation* _allocation = (Allocation*)_mem;
 		allocator->allocateCallback(allocator, _allocation, bytes, allocationSize, firstPage, numPagesRequested);
 	}
-
-	SetRange(allocator, firstPage, numPagesRequested);
 
 	if (firstPage == 0 || allocator->size % PageSize != 0) {
 		assert(false, "");
@@ -914,10 +917,10 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 #endif
 	u32 firstPage = address / PageSize;
 	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
+	ClearRange(allocator, firstPage, numPages);
 	if (allocator->releaseCallback != 0) {
 		allocator->releaseCallback(allocator, allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
 	}
-	ClearRange(allocator, firstPage, numPages);
 
 	// Unlink tracking
 	if (allocation->next != 0) {
