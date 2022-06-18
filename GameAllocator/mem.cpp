@@ -90,6 +90,7 @@ namespace Memory {
 
 		u32 * mask = (u32*)AllocatorPageMask(allocator);
 		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
+		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
 		assert(allocator->size / PageSize == numBitsInMask, "< this was the old way of calculating numBitsInMask. I like the above new way better");
 		assert(allocator->size % PageSize == 0, "Memory::FindRange, the allocators size must be a multiple of Memory::PageSize, otherwise there would be a partial page at the end");
 		assert(mask != 0, "");
@@ -102,6 +103,7 @@ namespace Memory {
 			u32 m = i / TrackingUnitSize;
 			u32 b = i % TrackingUnitSize;
 
+			assert(m < numElementsInMask, "indexing mask out of range");
 			bool set = mask[m] & (1 << b);
 
 			if (!set) {
@@ -176,12 +178,14 @@ namespace Memory {
 		assert(allocator->size / PageSize == numBitsInMask, "< this was the old way of calculating numBitsInMask. I like the above new way better");
 		assert(numBitsInMask != 0, "");
 #endif
+		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
 
 		for (u32 i = startBit; i < startBit + bitCount; ++i) {
 
 			u32 m = i / TrackingUnitSize;
 			u32 b = i % TrackingUnitSize;
 
+			assert(m < numElementsInMask, "indexing mask out of range");
 #if _DEBUG
 			assert(i < numBitsInMask, "");
 			bool set = mask[m] & (1 << b);
@@ -190,6 +194,8 @@ namespace Memory {
 
 			mask[m] |= (1 << b);
 		}
+
+		allocator->numPagesUsed += bitCount;
 	}
 
 	static inline void ClearRange(Allocator* allocator, u32 startBit, u32 bitCount) {
@@ -206,10 +212,14 @@ namespace Memory {
 		assert(numBitsInMask != 0, "");
 #endif
 
+		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
+
 		for (u32 i = startBit; i < startBit + bitCount; ++i) {
 
 			u32 m = i / TrackingUnitSize;
 			u32 b = i % TrackingUnitSize;
+
+			assert(m < numElementsInMask, "indexing mask out of range");
 
 #if _DEBUG
 			assert(i < numBitsInMask, "");
@@ -219,6 +229,10 @@ namespace Memory {
 
 			mask[m] &= ~(1 << b);
 		}
+
+		assert(allocator->numPagesUsed != 0, "");
+		assert(allocator->numPagesUsed >= bitCount != 0, "underflow");
+		allocator->numPagesUsed -= bitCount;
 	}
 
 #if MEM_USE_SUBALLOCATORS
@@ -319,7 +333,7 @@ namespace Memory {
 #elif ATLAS_32
 			u32 firstPage = (u32)(((u8*)block - AllocatorAllocatable(allocator)) / PageSize);
 #endif
-			allocator->allocateCallback(block, requestedBytes, blockSize, firstPage, grabNewPage? 1 : 0);
+			allocator->allocateCallback(allocator, block, requestedBytes, blockSize, firstPage, grabNewPage? 1 : 0);
 		}
 
 		// Memory always follows the header
@@ -394,7 +408,7 @@ namespace Memory {
 		}
 
 		if (allocator->releaseCallback != 0) {
-			allocator->releaseCallback(header, header->size, blockSize, startPage, releasePage? 1 : 0);
+			allocator->releaseCallback(allocator, header, header->size, blockSize, startPage, releasePage? 1 : 0);
 		}
 
 		// If appropriate, release entire page
@@ -756,6 +770,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	u32 numPagesRequested = allocationSize / PageSize + (allocationSize % PageSize ? 1 : 0);
 	assert(numPagesRequested > 0, "Memory::Allocate needs to request at least 1 page");
 	
+	// We can record the request here. It's made before the allocation callback, and is valid for sub-allocations too.
 	allocator->requested += bytes;
 	assert(allocator->requested < allocator->size, "");
 
@@ -795,7 +810,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 		u8* _mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
 		_mem += allocationHeaderPadding;
 		Allocation* _allocation = (Allocation*)_mem;
-		allocator->allocateCallback(_allocation, bytes, allocationSize, firstPage, numPagesRequested);
+		allocator->allocateCallback(allocator, _allocation, bytes, allocationSize, firstPage, numPagesRequested);
 	}
 
 	SetRange(allocator, firstPage, numPagesRequested);
@@ -849,12 +864,16 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	u32 alignment = allocation->alignment;
 	assert(alignment != 0, "Memory::Free, bad alignment, probably bad memory");
 	
+	u32 allocationSize = allocation->size; // Add enough space to pad out for alignment
+	allocationSize += (allocationSize % alignment > 0) ? alignment - (allocationSize % alignment) : 0;
+
 	u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
-	u32 paddedAllocationSize = allocation->size + allocationHeaderPadding + sizeof(Allocation);
-	assert(allocation->size != 0, "Memory::Free, double free");
+	u32 paddedAllocationSize = allocationSize + allocationHeaderPadding + sizeof(Allocation);
+	assert(allocationSize != 0, "Memory::Free, double free");
 	//mem -= allocationHeaderPadding; // Will be divided by page size, doesn't really matter
 	
 	assert(allocator->requested >= allocation->size, "Memory::Free releasing more memory than was requested");
+	assert(allocator->requested != 0, "Memory::Free releasing more memory, but there is nothing to release");
 	allocator->requested -= allocation->size;
 
 #if MEM_USE_SUBALLOCATORS
@@ -896,7 +915,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	u32 firstPage = address / PageSize;
 	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
 	if (allocator->releaseCallback != 0) {
-		allocator->releaseCallback(allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
+		allocator->releaseCallback(allocator, allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
 	}
 	ClearRange(allocator, firstPage, numPages);
 
@@ -1029,11 +1048,6 @@ void* __cdecl  operator new (decltype(sizeof(0)) size, u32 alignment, const char
 	return Memory::Allocate(size, alignment, location, allocator);
 }
 
-/*void* __cdecl  operator new (decltype(sizeof(0)) size, void* ptr) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return ptr; // Placement new
-}*/
-
 void __cdecl operator delete (void* ptr) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
 	return Memory::Release(ptr, "internal - ::delete(void*)", Memory::GlobalAllocator);
@@ -1059,11 +1073,6 @@ void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::no
 	return Memory::Release(ptr, "internal - ::delete(void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
 }
 
-/*void __cdecl operator delete (void* ptr, void* voidptr2) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	// No-op, placement delete
-}*/
-
 void* __cdecl operator new[](decltype(sizeof(0)) size) {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
 	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new[](size_t)", Memory::GlobalAllocator);
@@ -1073,11 +1082,6 @@ void* __cdecl operator new[](decltype(sizeof(0)) size, const std::nothrow_t& not
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
 	return Memory::Allocate(size, Memory::DefaultAlignment, "internal - ::new[](size_t, nothrow_t&)", Memory::GlobalAllocator);
 }
-
-/*void* __cdecl operator new[](decltype(sizeof(0)) size, void* ptr) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return ptr; // Placement new
-}*/
 
 void __cdecl operator delete[](void* ptr) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
@@ -1098,11 +1102,6 @@ void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::n
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
 	return Memory::Release(ptr, "internal - ::delete[](void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
 }
-
-/*void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	// No-op, placement delete
-}*/
 
 #if MEM_DEFINE_NEW
 #define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator

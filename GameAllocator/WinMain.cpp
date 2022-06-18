@@ -106,6 +106,7 @@ struct MemoryDebugInfo {
 		}
 
 		assert(NumFreePages + NumUsedPages + NumOverheadPages == NumberOfPages, "Page number does not add up");
+		assert(NumUsedPages + NumOverheadPages == allocator->numPagesUsed, "Added up wrong number of used pages?!!");
 	}
 
 	bool IsPageSet(u32 page) {

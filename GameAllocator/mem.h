@@ -71,8 +71,8 @@ static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #endif
 
 namespace Memory {
-	typedef void (*AllocationCallback)(void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
-	typedef void (*ReleaseCallback)(void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+	typedef void (*AllocationCallback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+	typedef void (*ReleaseCallback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
 
 	struct Allocation {
 		Allocation* prev;
@@ -98,14 +98,18 @@ namespace Memory {
 		Allocation* free_1024;
 		Allocation* free_2048;
 
+		Allocation* active;
+
 		AllocationCallback allocateCallback;
 		ReleaseCallback releaseCallback;
 
-		Allocation* active;
-		u32 size; // In bytes, how big is the allocator
-		u32 requested;
+		u32 size; // In bytes, how much total memory is the allocator managing
+		u32 requested; // How many bytes where requested (raw)
 		u32 offsetToAllocatable;
 		u32 scanBit;
+
+		u32 numPagesUsed;
+		u32 padding_64bit;
 
 #if ATLAS_32
 		u32 padding_32bit[9];
@@ -138,7 +142,7 @@ namespace Memory {
 	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 }
 
-static_assert (sizeof(Memory::Allocator) == 88, "Memory::Allocator should be 72 bytes (704 bits)");
+static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");
 static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 32 bytes (256 bits)");
 
 // https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
@@ -183,25 +187,21 @@ namespace std {
 // C++ 11: https://cplusplus.com/reference/new/operator%20new/
 void* __cdecl operator new (decltype(sizeof(0)) size);
 void* __cdecl operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
-// void* __cdecl operator new (decltype(sizeof(0)) size, void* ptr) noexcept; Can't overload placement new
 void* operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept; // Non standard, tracked
 
 // C++ 14: https://cplusplus.com/reference/new/operator%20delete/
 void __cdecl operator delete (void* ptr) noexcept;
 void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-// void __cdecl operator delete (void* ptr, void* voidptr2) noexcept; // Can't overload placement delete
 void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size) noexcept;
 void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
 
 // C++ 11: https://cplusplus.com/reference/new/operator%20new[]/
 void* __cdecl operator new[](decltype(sizeof(0)) size);
 void* __cdecl operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
-// void* __cdecl operator new[](decltype(sizeof(0)) size, void* ptr) noexcept; // Can't overload placement new
 
 // C++ 14: https://cplusplus.com/reference/new/operator%20delete[]/
 void __cdecl operator delete[](void* ptr) noexcept;
 void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-// void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept; // Can't overload placement delete
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept;
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
 #endif // Tracked new is defined after STL allocator so #define new doesn't mess with placement new
