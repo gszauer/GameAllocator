@@ -26,31 +26,31 @@ namespace Memory {
 	}
 
 	static inline u32 AllocatorPaddedSize() {
-		u32 allocatorHeaderSize = sizeof(Allocator);
-		u32 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
+		const u32 allocatorHeaderSize = sizeof(Allocator);
+		const u32 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
 		return allocatorHeaderSize + allocatorHeaderPadding;
 	}
 
 	static inline u8* AllocatorPageMask(Allocator* allocator) {
-		u64 allocatorHeaderSize = sizeof(Allocator);
-		u64 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
+		const u64 allocatorHeaderSize = sizeof(Allocator);
+		const u64 allocatorHeaderPadding = (((allocatorHeaderSize % DefaultAlignment) > 0) ? DefaultAlignment - (allocatorHeaderSize % DefaultAlignment) : 0);
 		return ((u8*)allocator) + allocatorHeaderSize + allocatorHeaderPadding;
 	}
 
 	static inline u32 AllocatorPageMaskSize(Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
-		u32 allocatorNumberOfPages = allocator->size / PageSize; // 1 page = 4096 bytes, how many are needed
+		const u32 allocatorNumberOfPages = allocator->size / PageSize; // 1 page = 4096 bytes, how many are needed
 		assert(allocator->size % PageSize == 0, "Allocator size should line up with page size");
 		// allocatorNumberOfPages is the number of bits that are required to track memory
 
 		// Pad out to sizeof(32) (if MaskTrackerSize is 32). This is because AllocatorPageMask will often be used as a u32 array
 		// and we want to make sure that enough space is reserved.
-		u32 allocatorPageArraySize = allocatorNumberOfPages / TrackingUnitSize + (allocatorNumberOfPages % TrackingUnitSize ? 1 : 0);
+		const u32 allocatorPageArraySize = allocatorNumberOfPages / TrackingUnitSize + (allocatorNumberOfPages % TrackingUnitSize ? 1 : 0);
 		assert(allocatorPageArraySize % (TrackingUnitSize / 8) == 0, "allocatorPageArraySize should always be a multiple of 8");
 		return allocatorPageArraySize * (TrackingUnitSize / 8); // In bytes, not bits
 	}
 
 	static inline u8* AllocatorAllocatable(Allocator* allocator) {
-#if MEM_FIRST_FIT
+#if 1
 		return (u8*)allocator + allocator->offsetToAllocatable;
 #else
 		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
@@ -67,7 +67,7 @@ namespace Memory {
 	}
 
 	static inline u32 AllocatorAllocatableSize(Allocator* allocator) {
-#if MEM_FIRST_FIT
+#if 1
 		return allocator->size - allocator->offsetToAllocatable;
 #else
 		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
@@ -343,7 +343,11 @@ namespace Memory {
 		*freeList = header;
 
 		// Find the first allocation inside the page
+#if ATLAS_64
 		u64 startPage = (u64)((u8*)header - AllocatorAllocatable(allocator)) / PageSize;
+#elif ATLAS_32
+		u32 startPage = (u32)((u8*)header - AllocatorAllocatable(allocator)) / PageSize;
+#endif
 		u8* mem = AllocatorAllocatable(allocator) + startPage * PageSize;
 
 		// Each sub allocator page contains multiple blocks. check if all of the blocks 
@@ -410,11 +414,8 @@ namespace Memory {
 		alloc.free_2048 = 0;
 		alloc.active = 0;
 		alloc.size = 0;
-#if MEM_FIRST_FIT
 		alloc.offsetToAllocatable = 0;
-#else
 		alloc.scanBit = 0;
-#endif
 	}
 }
 
@@ -422,7 +423,11 @@ static_assert (Memory::TrackingUnitSize % 8 == 0, "Memory::MaskTrackerSize must 
 
 Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 	// First, make sure that the memory being passed in is aligned well
+#if ATLAS_64
 	u64 ptr = (u64)((const void*)memory);
+#elif ATLAS_32
+	u32 ptr = (u32)((const void*)memory);
+#endif
 	assert(ptr % DefaultAlignment == 0, "Memory::Initialize, the memory being managed start aligned to Memory::DefaultAlignment");
 	assert(bytes % PageSize == 0, "Memory::Initialize, the size of the memory being managed must be aligned to Memory::PageSize");
 	assert(bytes / PageSize >= 10, "Memory::Initialize, minimum memory size is 10 pages, page size is Memory::PageSize");
@@ -445,11 +450,8 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 		numberOfMasksUsed += 1;
 	}
 	metaDataSizeBytes = numberOfMasksUsed * PageSize; // This way, allocatable will start on a page boundary
-#if MEM_FIRST_FIT
 	allocator->offsetToAllocatable = metaDataSizeBytes;
-#else
 	allocator->scanBit = 0;
-#endif
 	SetRange(allocator, 0, numberOfMasksUsed);
 
 #if _DEBUG
@@ -488,9 +490,7 @@ void Memory::Shutdown(Allocator* allocator) {
 	assert(allocator != 0, "Memory::Shutdown called without it being initialized");
 	u32* mask = (u32*)AllocatorPageMask(allocator);
 	u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
-#if MEM_FIRST_FIT
 	assert(allocator->offsetToAllocatable != 0, "Memory::Shutdown, trying to shut down an un-initialized allocator");
-#endif
 	assert(allocator->size > 0, "Memory::Shutdown, trying to shut down an un-initialized allocator");
 
 	// Unset tracking bits
@@ -728,7 +728,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	u32 firstPage = FindRange(allocator, numPagesRequested, 0);
 #else
 	u32 firstPage = FindRange(allocator, numPagesRequested, allocator->scanBit);
-	allocator->scanBit = firstPage + numPagesRequested; // TODO: tes thits?
+	allocator->scanBit = firstPage + numPagesRequested;
 #endif
 	assert(firstPage != 0, "Memory::Allocate failed to find enough pages to fufill allocation");
 	SetRange(allocator, firstPage, numPagesRequested);
@@ -815,7 +815,11 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 
 	// Clear the bits that where tracking this memory
 	u8* firstMemory = (u8*)allocator;
+#if ATLAS_64
 	u64 address = (u64)(mem - firstMemory);
+#elif ATLAS_32
+	u32 address = (u32)(mem - firstMemory);
+#endif
 	u32 firstPage = address / PageSize;
 	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
 	ClearRange(allocator, firstPage, numPages);
@@ -882,45 +886,56 @@ void* Memory::ReAllocate(void* mem, u32 newSize, u32 newAlignment, const char* l
 	return newMem;
 }
 
+#if MEM_IMPLEMENT_MALLOC
+#if MEM_DEFINE_MALLOC
 #undef malloc
 #undef free
 #undef memset
 #undef memcpy
 #undef calloc
 #undef realloc
+#endif
 
-void* malloc(u32 bytes) {
+extern "C" void* __cdecl malloc(decltype(sizeof(0)) bytes) {
 	return Memory::Allocate(bytes, Memory::DefaultAlignment, "internal - malloc", Memory::GlobalAllocator);
 }
 
-void free(void* data) {
+extern "C" void __cdecl free(void* data) {
 	return Memory::Release(data, "internal - free", Memory::GlobalAllocator);
 }
 
-void memset(void* mem, u8 value, u32 size) {
+extern "C" void* __cdecl memset(void* mem, i32 value, decltype(sizeof(0)) size) {
 	Memory::Set(mem, value, size, "internal - memset");
+	return mem;
 }
 
-void memcpy(void* dest, const void* src, u32 size) {
+extern "C" void* __cdecl memcpy(void* dest, const void* src, decltype(sizeof(0)) size) {
 	Memory::Copy(dest, src, size, "internal - memcpy");
+	return dest;
 }
 
-void* calloc(u32 count, u32 size) {
+extern "C" void* __cdecl calloc(decltype(sizeof(0)) count, decltype(sizeof(0)) size) {
 	return Memory::AllocateContigous(count, size, Memory::DefaultAlignment, "internal - calloc", Memory::GlobalAllocator);
 }
 
-void* realloc(void* mem, u32 size) {
+extern "C" void* __cdecl realloc(void* mem, decltype(sizeof(0)) size) {
 	return Memory::ReAllocate(mem, size, Memory::DefaultAlignment, "internal - realloc", Memory::GlobalAllocator);
 }
 
+#if MEM_DEFINE_MALLOC
 #define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
 #define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
 #define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
 #define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#endif
+#endif
 
+#if MEM_IMPLEMENT_NEW
+#if MEM_DEFINE_NEW
 #undef new
+#endif
 
 void* __cdecl operator new (decltype(sizeof(0)) size) {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
@@ -1012,4 +1027,7 @@ void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::n
 	// No-op, placement delete
 }*/
 
-#define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#if MEM_DEFINE_NEW
+#define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator
+#endif
+#endif

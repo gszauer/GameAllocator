@@ -65,8 +65,13 @@ struct MemoryDebugInfo {
 	
 
 	MemoryDebugInfo(Memory::Allocator* allocator) {
+#if ATLAS_64
 		u64 allocatorHeaderSize = sizeof(Memory::Allocator);
 		u64 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
+#elif ATLAS_32
+		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
+		u32 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
+#endif
 		PageMask = ((u8*)allocator) + allocatorHeaderSize + allocatorHeaderPadding;
 
 		NumberOfPages = allocator->size / Memory::PageSize; // 1 page = 4096 bytes, how many are needed
@@ -202,6 +207,7 @@ struct FrameBuffer { // For double buffered window
 
 		int bitmapMemorySize = (Width * Height) * 4;
 		Memory = (unsigned char*)VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+		//memset(Memory, 0, bitmapMemorySize);
 	}
 
 	void Destroy() {

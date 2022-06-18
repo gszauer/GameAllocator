@@ -85,7 +85,6 @@ static_assert (sizeof(f64) == 8, "f64 should be defined as a 8 byte type");
 	#endif
 #endif
 
-// TODO: Add 32 bit support
 #ifndef ATLAS_32
 	#ifndef ATLAS_64
 		#error "Unknown platform type. Is this 32 or 64 bit?"
@@ -94,6 +93,8 @@ static_assert (sizeof(f64) == 8, "f64 should be defined as a 8 byte type");
 
 #if ATLAS_64
 	static_assert (sizeof(void*) == 8, "Not on a 64 bit system");
+#elif ATLAS_32
+	static_assert (sizeof(void*) == 4, "Not on a 32 bit system");
 #else
 	#error "Unknown platform type."
 #endif

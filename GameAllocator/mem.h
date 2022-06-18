@@ -10,7 +10,21 @@
 // If set to 1, the allocator will clear memory when allocating it
 #define MEM_CLEAR_ON_ALLOC 0
 
-// ^ TODO: Maybe make these flags on the actual allocator?!?!?!?!
+// If set to 1, "C" functions for malloc, free, etc are provided. 
+#define MEM_IMPLEMENT_MALLOC 1
+
+// If set to 1, #define will be declared for malloc
+#define MEM_DEFINE_MALLOC 1
+
+// If set to 1, "C++" functions for new, delete, etc are provided. 
+#define MEM_IMPLEMENT_NEW 1
+
+// If set to 1, #define will be declared for new 
+#define MEM_DEFINE_NEW 1
+
+// If set to 1, the Memroy::STLAllocator class is defined 
+#define MEM_IMPLEMENT_STL 1
+
 
 #ifndef ATLAS_U8
 #define ATLAS_U8
@@ -22,6 +36,13 @@ static_assert (sizeof(u8) == 1, "u8 should be defined as a 1 byte type");
 #define ATLAS_U32
 typedef unsigned int u32;
 static_assert (sizeof(u32) == 4, "u32 should be defined as a 4 byte type");
+#endif 
+
+
+#ifndef ATLAS_I32
+#define ATLAS_I32
+typedef int i32;
+static_assert (sizeof(i32) == 4, "i32 should be defined as a 4 byte type");
 #endif 
 
 #ifndef ATLAS_U64
@@ -62,9 +83,13 @@ namespace Memory {
 		const char* location;
 		u32 size;
 		u32 alignment;
+
+#if ATLAS_32
+		u32 unused[3];
+#endif
 	};
 
-	struct Allocator { // TODO: The size isn't really special, just add the fast offsets!
+	struct Allocator {
 		Allocation* free_64;
 		Allocation* free_128;
 		Allocation* free_256;
@@ -74,11 +99,13 @@ namespace Memory {
 
 		Allocation* active;
 		u32 size;
-#if MEM_FIRST_FIT
-		// TODO: Remove free_64 so we can have fast scan bit and offset.
 		u32 offsetToAllocatable;
-#else
 		u32 scanBit;
+
+#if ATLAS_32
+		u32 unused[8];
+#elif ATLAS_64
+		u32 unused;
 #endif
 	};
 	
@@ -106,7 +133,7 @@ namespace Memory {
 	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 }
 
-static_assert (sizeof(Memory::Allocator) == 64, "Memory::Allocator should be 64 bytes (512 bits)");
+static_assert (sizeof(Memory::Allocator) == 72, "Memory::Allocator should be 72 bytes (576 bits)");
 static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 32 bytes (256 bits)");
 
 // https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
@@ -114,20 +141,36 @@ static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 3
 #define atlas_str(a) #a
 #define __LOCATION__ "On line: " atlas_xstr(__LINE__) ", in file: " __FILE__
 
-void* malloc(u32 bytes);
-void free(void* data);
-void memset(void* mem, u8 value, u32 size);
-void memcpy(void* dest, const void* src, u32 size);
-void* calloc(u32 count, u32 size);
-void* realloc(void* mem, u32 size);
+#if MEM_DEFINE_MALLOC
+#undef malloc
+#undef free
+#undef memset
+#undef memcpy
+#undef calloc
+#undef realloc
+#endif
 
+#if MEM_IMPLEMENT_MALLOC
+extern "C" void* __cdecl malloc(decltype(sizeof(0)) bytes);
+extern "C" void __cdecl free(void* data);
+extern "C" void* __cdecl memset(void* mem, i32 value, decltype(sizeof(0)) size);
+extern "C" void* __cdecl memcpy(void* dest, const void* src, decltype(sizeof(0)) size);
+extern "C" void* __cdecl calloc(decltype(sizeof(0)) count, decltype(sizeof(0)) size);
+extern "C" void* __cdecl realloc(void* mem, decltype(sizeof(0)) size);
+//#pragma intrinsic(memset, memcpy); // This is what we DON't WANT
+#pragma function(memset, memcpy); // Function, not intrinsic
+#endif
+
+#if MEM_DEFINE_MALLOC
 #define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
 #define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
 #define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
 #define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
 #define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#endif
 
+#if MEM_IMPLEMENT_NEW
 namespace std {
 	struct nothrow_t;
 }
@@ -136,6 +179,7 @@ namespace std {
 void* __cdecl operator new (decltype(sizeof(0)) size);
 void* __cdecl operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept;
 // void* __cdecl operator new (decltype(sizeof(0)) size, void* ptr) noexcept; Can't overload placement new
+void* operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept; // Non standard, tracked
 
 // C++ 14: https://cplusplus.com/reference/new/operator%20delete/
 void __cdecl operator delete (void* ptr) noexcept;
@@ -155,8 +199,9 @@ void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant
 // void __cdecl operator delete[](void* ptr, void* voidptr2) noexcept; // Can't overload placement delete
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept;
 void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept;
+#endif // Tracked new is defined after STL allocator so #define new doesn't mess with placement new
 
-// Tracked new is defined after STL allocator so #define new doesn't mess with placement new
+#if MEM_IMPLEMENT_STL
 namespace Memory {
 	template<typename T>
 	struct stl_identity {
@@ -256,12 +301,11 @@ namespace Memory {
 		};
 	};
 }
+#endif
 
-
-// Tracked
-void* operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept;
+#if MEM_DEFINE_NEW
 #define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
-
+#endif
 
 #if _WIN64
 	#ifdef ATLAS_32
