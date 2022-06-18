@@ -2,7 +2,6 @@
 #include <commctrl.h>
 
 #include "mem.h"
-#include "types.h"
 
 #ifndef _DEBUG
 #define assert(condition) ;

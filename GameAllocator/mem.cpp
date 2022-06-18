@@ -421,6 +421,37 @@ namespace Memory {
 
 static_assert (Memory::TrackingUnitSize % 8 == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
 
+u32 Memory::AlignAndTrim(void** memory, u32* size) {
+#if ATLAS_64
+	u64 ptr = (u64)((const void*)(*memory));
+#elif ATLAS_32
+	u32 ptr = (u32)((const void*)(*memory));
+#endif
+	u32 delta = 0;
+
+	// Align to DefaultAlignment
+	if (ptr % DefaultAlignment != 0) {
+		u8* mem = (u8*)(*memory);
+
+		u32 diff = ptr % DefaultAlignment;
+		assert(*size >= diff, "");
+
+		delta += diff;
+		mem += diff;
+		*size -= diff;
+		*memory = mem;
+	}
+
+	if ((*size) % PageSize != 0) {
+		u32 diff = (*size) % PageSize;
+		assert(*size >= diff, "");
+		*size -= diff;
+		delta += diff;
+	}
+
+	return delta;
+}
+
 Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 	// First, make sure that the memory being passed in is aligned well
 #if ATLAS_64

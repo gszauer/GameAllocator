@@ -38,10 +38,9 @@ typedef unsigned int u32;
 static_assert (sizeof(u32) == 4, "u32 should be defined as a 4 byte type");
 #endif 
 
-
 #ifndef ATLAS_I32
 #define ATLAS_I32
-typedef int i32;
+typedef __int32 i32;
 static_assert (sizeof(i32) == 4, "i32 should be defined as a 4 byte type");
 #endif 
 
@@ -114,8 +113,10 @@ namespace Memory {
 	const u32 PageSize = 4096;
 	const u32 TrackingUnitSize = 32;
 
-	// TODO: Make a trim function that will trim memory down so initialize works.
-	// u32 PreInitAlign(void** memory, u32* size); // Returns the number of bytes lost
+	// You can call AlignAndTrim before Initialize to make sure that memory is aligned to DefaultAlignment
+	// and to make sure that the size of the memory (after it's been aligned) is a multiple of PageSize
+	// both arguments are modified, the return value is how many bytes where removed
+	u32 AlignAndTrim(void** memory, u32* size); 
 
 	Allocator* Initialize(void* memory, u32 bytes);
 	void Shutdown(Allocator* allocator);
