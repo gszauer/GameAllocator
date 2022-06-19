@@ -84,6 +84,10 @@ struct MemoryDebugInfo {
 		}
 		metaDataSizeBytes = numberOfMasksUsed * Memory::PageSize; // This way, allocatable will start on a page boundary
 
+		// Account for meta data
+		metaDataSizeBytes += Memory::PageSize;
+		numberOfMasksUsed += 1;
+
 		u32 allocatorOverheadBytes = metaDataSizeBytes;
 		assert(allocatorOverheadBytes % Memory::PageSize == 0, "Offset to allocatable should always line up with page size");
 
@@ -105,6 +109,7 @@ struct MemoryDebugInfo {
 			}
 		}
 
+		// These are super useless right now
 		assert(NumFreePages + NumUsedPages + NumOverheadPages == NumberOfPages, "Page number does not add up");
 		assert(NumUsedPages + NumOverheadPages == allocator->numPagesUsed, "Added up wrong number of used pages?!!");
 	}

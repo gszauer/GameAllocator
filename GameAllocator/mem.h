@@ -140,6 +140,11 @@ namespace Memory {
 
 	void* AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
+
+	namespace Debug {
+		typedef void (*DumpCallback)(const u8* mem, u32 size);
+		void DumpAllocator(Allocator* allocator, DumpCallback callback);
+	}
 }
 
 static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");

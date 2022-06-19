@@ -10,12 +10,10 @@ static_assert (sizeof(u16) == 2, "u16 should be defined as a 2 byte type");
 
 #if _DEBUG
 #define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
-#define NotImplementedException() Memory::Assert(false, "Not Implemented", __LINE__, __FILE__)
 #else
 #define assert(cond, msg) ;
-#define NotImplementedException() ;
 #endif
-
+#define NotImplementedException() (*(char*)((void*)0) = '\0');
 
 namespace Memory {
 	static void Assert(bool condition, const char* msg, u32 line, const char* file) {
@@ -265,11 +263,9 @@ namespace Memory {
 			allocator->scanBit = page + 1;
 #endif
 			SetRange(allocator, page, 1);
-			allocator->numPagesUsed += 1;
 
 			// Zero out the pages memory
-			u8* mem = AllocatorAllocatable(allocator);
-			mem += PageSize * page;
+			u8* mem = (u8*)allocator + PageSize * page;
 			Set(mem, 0, PageSize, __LOCATION__);
 
 			// Figure out how many blocks fit into this page
@@ -330,9 +326,9 @@ namespace Memory {
 
 		if (allocator->allocateCallback != 0) {
 #if ATLAS_64
-			u64 firstPage = (u64)(((u8*)block - AllocatorAllocatable(allocator)) / PageSize);
+			u64 firstPage = (u64)(((u8*)block - (u8*)allocator) / PageSize);
 #elif ATLAS_32
-			u32 firstPage = (u32)(((u8*)block - AllocatorAllocatable(allocator)) / PageSize);
+			u32 firstPage = (u32)(((u8*)block - (u8*)allocator) / PageSize);
 #endif
 			allocator->allocateCallback(allocator, block, requestedBytes, blockSize, firstPage, grabNewPage? 1 : 0);
 		}
@@ -386,11 +382,11 @@ namespace Memory {
 
 		// Find the first allocation inside the page
 #if ATLAS_64
-		u64 startPage = (u64)((u8*)header - AllocatorAllocatable(allocator)) / PageSize;
+		u64 startPage = (u64)((u8*)header - (u8*)allocator) / PageSize;
 #elif ATLAS_32
-		u32 startPage = (u32)((u8*)header - AllocatorAllocatable(allocator)) / PageSize;
+		u32 startPage = (u32)((u8*)header - (u8*)allocator) / PageSize;
 #endif
-		u8* mem = AllocatorAllocatable(allocator) + startPage * PageSize;
+		u8* mem =(u8*)allocator + startPage * PageSize;
 
 		// Each sub allocator page contains multiple blocks. check if all of the blocks 
 		// belonging to a single page are free, if they are, release the page.
@@ -411,7 +407,7 @@ namespace Memory {
 		// If appropriate, release entire page
 		if (releasePage) {
 			// Remove from free list
-			mem = AllocatorAllocatable(allocator) + startPage * PageSize;
+			mem = (u8*)allocator + startPage * PageSize;
 			for (u32 i = 0; i < numAllocationsPerPage; ++i) {
 				Allocation* iter = (Allocation*)mem;
 				mem += blockSize;
@@ -441,8 +437,6 @@ namespace Memory {
 			// Clear the tracking bits
 			assert(startPage > 0, "");
 			ClearRange(allocator, startPage, 1);
-			assert(allocator->numPagesUsed >= 1, "");
-			allocator->numPagesUsed -= 1;
 		}
 
 		if (allocator->releaseCallback != 0) {
@@ -514,12 +508,17 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes) {
 		numberOfMasksUsed += 1;
 	}
 	metaDataSizeBytes = numberOfMasksUsed * PageSize; // This way, allocatable will start on a page boundary
+
+	// Add a debug page at the end
+	metaDataSizeBytes += PageSize;
+	numberOfMasksUsed += 1;
+
 	allocator->offsetToAllocatable = metaDataSizeBytes;
 	allocator->scanBit = 0;
 	SetRange(allocator, 0, numberOfMasksUsed);
 	allocator->requested = 0;
 
-#if _DEBUG
+#if _DEBUG & MEM_CLEAR_ON_ALLOC
 	{
 		// Fill memory with pattern. Memory is zeroed out on allocation, so it's fine to have
 		// junk in here as the initial value. Don't need it in production tough...
@@ -566,6 +565,11 @@ void Memory::Shutdown(Allocator* allocator) {
 		numberOfMasksUsed += 1;
 	}
 	metaDataSizeBytes = numberOfMasksUsed * PageSize;
+
+	// There is a debug between the memory bitmask and allocatable memory
+	metaDataSizeBytes += PageSize;
+	numberOfMasksUsed += 1;
+
 	ClearRange(allocator, 0, numberOfMasksUsed);
 	assert(allocator->requested == 0, "Memory::Shutdown, not all memory has been released");
 
@@ -811,20 +815,13 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 
 	SetRange(allocator, firstPage, numPagesRequested);
 
-	if (allocator->allocateCallback != 0) {
-		u8* _mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
-		_mem += allocationHeaderPadding;
-		Allocation* _allocation = (Allocation*)_mem;
-		allocator->allocateCallback(allocator, _allocation, bytes, allocationSize, firstPage, numPagesRequested);
-	}
-
 	if (firstPage == 0 || allocator->size % PageSize != 0) {
 		assert(false, "");
 		return 0; // Fail this allocation in release mode
 	}
 	
 	// Fill out header
-	u8* mem = AllocatorAllocatable(allocator) + firstPage * PageSize;
+	u8* mem = (u8*)allocator + firstPage * PageSize;
 	mem += allocationHeaderPadding;
 	Allocation* allocation = (Allocation*)mem;
 
@@ -848,6 +845,14 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 #if MEM_CLEAR_ON_ALLOC
 	Set(mem, 0, bytes, location);
 #endif
+
+	if (allocator->allocateCallback != 0) {
+		u8* _mem = (u8*)allocator + firstPage * PageSize;
+		_mem += allocationHeaderPadding;
+		Allocation* _allocation = (Allocation*)_mem;
+		allocator->allocateCallback(allocator, _allocation, bytes, allocationSize, firstPage, numPagesRequested);
+	}
+
 	return mem;
 }
 
@@ -909,7 +914,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 #endif
 
 	// Clear the bits that where tracking this memory
-	u8* firstMemory = Memory::AllocatorAllocatable(allocator);
+	u8* firstMemory = (u8*)allocator;
 #if ATLAS_64
 	u64 address = (u64)(mem - firstMemory);
 #elif ATLAS_32
@@ -918,9 +923,6 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	u32 firstPage = address / PageSize;
 	u32 numPages = paddedAllocationSize / PageSize + (paddedAllocationSize % PageSize ? 1 : 0);
 	ClearRange(allocator, firstPage, numPages);
-	if (allocator->releaseCallback != 0) {
-		allocator->releaseCallback(allocator, allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
-	}
 
 	// Unlink tracking
 	if (allocation->next != 0) {
@@ -936,6 +938,10 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 
 	// Set the size to 0, to indicate that this header has been free-d
 	allocation->size = 0;
+
+	if (allocator->releaseCallback != 0) {
+		allocator->releaseCallback(allocator, allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
+	}
 }
 
 void* Memory::AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment, const char* location, Allocator* allocator) {
@@ -1110,3 +1116,379 @@ void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::n
 #define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator
 #endif
 #endif
+
+// Scott Schurr const string
+// https://gist.github.com/creative-quant/6aa863e1cb415cbb9056f3d86f23b2c4
+namespace Memory {
+	namespace Debug {
+		class str_const { // constexpr string
+		private:
+			const char* const p_;
+			const ptr_type sz_;
+		private:
+			str_const& operator= (const str_const& other) = delete;
+			str_const(const str_const&& other) = delete;
+			str_const& operator= (const str_const&& other) = delete;
+		public:
+			template<ptr_type N>
+			constexpr str_const(const char(&a)[N]) noexcept : // ctor
+				p_(a), sz_(N - 1) {
+			}
+			constexpr char operator[](ptr_type n) const noexcept { // []
+				return n < sz_ ? p_[n] : (*(char*)((void*)0) = '\0');
+			}
+			constexpr ptr_type size() const noexcept { // string length
+				return sz_;
+			} // size()
+			const char* begin() const noexcept { // start iterator
+				return p_;
+			} // begin()
+			const char* end() const noexcept { // End iterator
+				return p_ + sz_;
+			} // end()
+			template<typename T>
+			T& operator<<(T& stream) { // Stream op
+				stream << p_;
+				return stream;
+			} // <<
+		};
+
+		u32 u64toa(u8* dest, u32 destSize, u64 num) { // Returns length of string
+			Set(dest, 0, destSize, "Memory::Debug::u64toa");
+
+			u32 count = 0;
+			u32 tmp = num;
+			while (tmp != 0) {
+				tmp = tmp / 10;
+				count = count + 1;
+			}
+
+			if (count == 0) {
+				*dest = '0';
+				return 1;
+			}
+
+			u8* last = dest + count - 1;
+			while (num != 0) {
+				u64 digit = num % 10;
+				num = num / 10;
+
+				*last-- = '0' + digit;
+			}
+
+			return count;
+		}
+
+		u32 strlen(const u8* str) {
+			const u8* s;
+			for (s = str; *s; ++s);
+			return (u32)(s - str);
+		}
+	} // namespace Debug
+} // namespace Memory
+
+void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
+	const char* l = "Memory::Debug::DumpAllocationHeaders";
+
+	u8* debugPage = AllocatorAllocatable(allocator) - PageSize; // Debug page is always one page before allocatable
+	u32 debugSize = PageSize;
+
+	// Reset memory buffer
+	Set(debugPage, 0, debugSize, l);
+	u8* i_to_a_buff = debugPage; // Used to convert numbers to strings
+	const u32 i_to_a_buff_size = strlen((const u8*)"18446744073709551615") + 1; // u64 max
+	u8* mem = i_to_a_buff + i_to_a_buff_size;
+	u32 memSize = PageSize - i_to_a_buff_size;
+
+	{ // Tracking %d Pages, %d KiB (%d MiB)
+		constexpr str_const out0("Tracking ");
+		Copy(mem, out0.begin(), out0.size(), l);
+		mem += out0.size();
+		memSize -= out0.size();
+
+		u32 numPages = allocator->size / Memory::PageSize;
+		assert(allocator->size % Memory::PageSize == 0, l);
+
+		u32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, numPages);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out1(" pages, size: ");
+		Copy(mem, out1.begin(), out1.size(), l);
+		mem += out1.size();
+		memSize -= out1.size();
+
+		u32 kib = allocator->size / 1024;
+		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, kib);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out2(" KiB (");
+		Copy(mem, out2.begin(), out2.size(), l);
+		mem += out2.size();
+		memSize -= out2.size();
+
+		u32 mib = kib / 1024;
+		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, mib);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out3(" MiB)\n");
+		Copy(mem, out3.begin(), out3.size(), l);
+		mem += out3.size();
+		memSize -= out3.size();
+	}
+
+	// Dump what's been written so far
+	mem = i_to_a_buff + i_to_a_buff_size;
+	callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+	// Reset memory buffer
+	Set(debugPage, 0, debugSize, l);
+	i_to_a_buff = debugPage; // Used to convert numbers to strings
+	mem = i_to_a_buff + i_to_a_buff_size;
+	memSize = PageSize - i_to_a_buff_size;
+
+	{ // Pages: %d free, %d used, %d overhead
+		constexpr str_const out0("Page breakdown: ");
+		Copy(mem, out0.begin(), out0.size(), l);
+		mem += out0.size();
+		memSize -= out0.size();
+
+		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / Memory::PageSize;
+		if (metaDataSizeBytes % Memory::PageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * Memory::PageSize; // This way, allocatable will start on a page boundary
+		// Account for meta data
+		metaDataSizeBytes += Memory::PageSize;
+		numberOfMasksUsed += 1;
+
+		u32 numPages = allocator->size / Memory::PageSize;
+		assert(allocator->size % Memory::PageSize == 0, l);
+		u32 usedPages = allocator->numPagesUsed;
+		assert(usedPages <= numPages, l);
+		u32 freePages = numPages - usedPages;
+		u32 overheadPages = metaDataSizeBytes / Memory::PageSize;
+		assert(usedPages >= overheadPages, l);
+		usedPages -= overheadPages;
+
+		u32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, freePages);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out1(" free, ");
+		Copy(mem, out1.begin(), out1.size(), l);
+		mem += out1.size();
+		memSize -= out1.size();
+
+		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, usedPages);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out2(" used, ");
+		Copy(mem, out2.begin(), out2.size(), l);
+		mem += out2.size();
+		memSize -= out2.size();
+
+		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, overheadPages);
+		Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		constexpr str_const out3(" overhead\n");
+		Copy(mem, out3.begin(), out3.size(), l);
+		mem += out3.size();
+		memSize -= out3.size();
+	}
+
+	// Dump what's been written so far
+	mem = i_to_a_buff + i_to_a_buff_size;
+	callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+	// Reset memory buffer
+	Set(debugPage, 0, debugSize, l);
+	i_to_a_buff = debugPage; // Used to convert numbers to strings
+	mem = i_to_a_buff + i_to_a_buff_size;
+	memSize = PageSize - i_to_a_buff_size;
+
+	{ // Dump active list
+		constexpr str_const out0("\nActive List:\n");
+		Copy(mem, out0.begin(), out0.size(), l);
+		mem += out0.size();
+		memSize -= out0.size();
+
+		for (Allocation* iter = allocator->active; iter != 0; iter = iter->next) {
+			u64 address = (u64)((void*)((u8*)iter));
+
+			constexpr str_const out5("\t");
+			Copy(mem, out5.begin(), out5.size(), l);
+			mem += out5.size();
+			memSize -= out5.size();
+
+			i32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out2(", size: ");
+			Copy(mem, out2.begin(), out2.size(), l);
+			mem += out2.size();
+			memSize -= out2.size();
+
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->size);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out3(" / ");
+			Copy(mem, out3.begin(), out3.size(), l);
+			mem += out3.size();
+			memSize -= out3.size();
+
+			u32 allocationHeaderPadding = sizeof(Allocation) % iter->alignment > 0 ? iter->alignment - sizeof(Allocation) % iter->alignment : 0;
+
+			u64 realSize = iter->size + sizeof(Allocation) + allocationHeaderPadding;
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, realSize);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out6(", alignment: ");
+			Copy(mem, out6.begin(), out6.size(), l);
+			mem += out6.size();
+			memSize -= out6.size();
+
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->alignment);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out0(", prev: ");
+			Copy(mem, out0.begin(), out0.size(), l);
+			mem += out0.size();
+			memSize -= out0.size();
+
+			address = (u64)((void*)(iter->prev));
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out1(", next: ");
+			Copy(mem, out1.begin(), out1.size(), l);
+			mem += out1.size();
+			memSize -= out1.size();
+
+			address = (u64)((void*)(iter->next));
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			Copy(mem, i_to_a_buff, i_len, l);
+			mem += i_len;
+			memSize -= i_len;
+
+			constexpr str_const out4("\n");
+			Copy(mem, out4.begin(), out4.size(), l);
+			mem += out4.size();
+			memSize -= out4.size();
+
+			if (memSize < PageSize / 4) { // Drain occasiaonally
+				// Dump what's been written so far
+				mem = i_to_a_buff + i_to_a_buff_size;
+				callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+				// Reset memory buffer
+				Set(debugPage, 0, debugSize, l);
+				i_to_a_buff = debugPage; // Used to convert numbers to strings
+				mem = i_to_a_buff + i_to_a_buff_size;
+				memSize = PageSize - i_to_a_buff_size;
+			}
+		}
+
+		if (memSize != PageSize - i_to_a_buff_size) { // Drain if needed
+			// Dump what's been written so far
+			mem = i_to_a_buff + i_to_a_buff_size;
+			callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+			// Reset memory buffer
+			Set(debugPage, 0, debugSize, l);
+			i_to_a_buff = debugPage; // Used to convert numbers to strings
+			mem = i_to_a_buff + i_to_a_buff_size;
+			memSize = PageSize - i_to_a_buff_size;
+		}
+	}
+
+	// Reset memory buffer
+	Set(debugPage, 0, debugSize, l);
+	i_to_a_buff = debugPage; // Used to convert numbers to strings
+	mem = i_to_a_buff + i_to_a_buff_size;
+	memSize = PageSize - i_to_a_buff_size;
+
+	constexpr str_const newline("\n");
+	constexpr str_const isSet("0");
+	constexpr str_const notSet("-");
+
+	{ // Draw a pretty graph
+		u32 numPages = allocator->size / Memory::PageSize;
+		u32* mask = (u32*)AllocatorPageMask(allocator);
+
+		constexpr str_const out5("\nPage chart:\n");
+		Copy(mem, out5.begin(), out5.size(), l);
+		mem += out5.size();
+		memSize -= out5.size();
+
+		for (u32 i = 0; i < numPages; ++i) {
+			u32 m = i / TrackingUnitSize;
+			u32 b = i % TrackingUnitSize;
+
+			bool set = mask[m] & (1 << b);
+			if (set) {
+				Copy(mem, isSet.begin(), isSet.size(), l);
+				mem += isSet.size();
+				memSize -= isSet.size();
+			}
+			else {
+				Copy(mem, notSet.begin(), notSet.size(), l);
+				mem += notSet.size();
+				memSize -= notSet.size();
+			}
+
+			if ((i + 1) % 80 == 0) {
+				Copy(mem, newline.begin(), newline.size(), l);
+				mem += newline.size();
+				memSize -= newline.size();
+			}
+
+			if (memSize < PageSize / 4) { // Drain occasiaonally
+				// Dump what's been written so far
+				mem = i_to_a_buff + i_to_a_buff_size;
+				callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+				// Reset memory buffer
+				Set(debugPage, 0, debugSize, l);
+				i_to_a_buff = debugPage; // Used to convert numbers to strings
+				mem = i_to_a_buff + i_to_a_buff_size;
+				memSize = PageSize - i_to_a_buff_size;
+			}
+		}
+
+		if (memSize != PageSize - i_to_a_buff_size) { // Drain if needed
+			// Dump what's been written so far
+			mem = i_to_a_buff + i_to_a_buff_size;
+			callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+
+			// Reset memory buffer
+			Set(debugPage, 0, debugSize, l);
+			i_to_a_buff = debugPage; // Used to convert numbers to strings
+			mem = i_to_a_buff + i_to_a_buff_size;
+			memSize = PageSize - i_to_a_buff_size;
+		}
+	}
+}
+
