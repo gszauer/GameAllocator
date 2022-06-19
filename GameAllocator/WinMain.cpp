@@ -32,7 +32,7 @@ void NotImplemented() {
 #define ID_FREE_MEM 6
 #define ID_FREE_MEM_ALL 7
 #define ID_REFRESH_MEM 8
-#define ID_TESTS_MEM 9
+#define ID_DUMP_ALLOC 9
 
 #define UD_MAX_POS (4096*4)
 #define UD_MIN_POS 0
@@ -850,7 +850,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 			hwndButtons[0] = CreateWindowW(L"Button", L"Allocate", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_ALLOCATE_MEM, NULL, NULL);
 			hwndButtons[1] = CreateWindowW(L"Button", L"Free Selected", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_FREE_MEM, NULL, NULL);
 			hwndButtons[2] = CreateWindowW(L"Button", L"Refresh Display", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_REFRESH_MEM, NULL, NULL);
-			hwndButtons[3] = CreateWindowW(L"Button", L"Run Tests", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_TESTS_MEM, NULL, NULL);
+			hwndButtons[3] = CreateWindowW(L"Button", L"Dump Allocator", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_DUMP_ALLOC, NULL, NULL);
 			hwndButtons[4] = CreateWindowW(L"Button", L"Free All", WS_CHILD | WS_VISIBLE, 10, 10, 50, 50, hwnd, (HMENU)ID_FREE_MEM_ALL, NULL, NULL);
 
 			hwndUpDown = CreateWindowW(UPDOWN_CLASSW, NULL, WS_CHILD | WS_VISIBLE | UDS_SETBUDDYINT | UDS_ALIGNRIGHT, 0, 0, 0, 0, hwnd, (HMENU)ID_UPDOWN, NULL, NULL);
@@ -940,13 +940,40 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		if (LOWORD(wParam) == ID_REFRESH_MEM) {
 			update = true;
 		}
+		if (LOWORD(wParam) == ID_DUMP_ALLOC) {
+			update = true;
+
+			HANDLE hFile = CreateFile(
+				L"MemInfo.txt",     // Filename
+				GENERIC_WRITE,          // Desired access
+				FILE_SHARE_READ,        // Share mode
+				NULL,                   // Security attributes
+				CREATE_NEW,             // Creates a new file, only if it doesn't already exist
+				FILE_ATTRIBUTE_NORMAL,  // Flags and attributes
+				NULL);                  // Template file handle
+			assert(hFile != INVALID_HANDLE_VALUE);
+
+			Memory::Debug::DumpAllocator(Memory::GlobalAllocator, [](const u8* mem, u32 size, void* fileHandle) {
+				HANDLE file = *(HANDLE*)fileHandle;
+				DWORD bytesWritten;
+				WriteFile(
+					file,            // Handle to the file
+					mem,  // Buffer to write
+					size,   // Buffer size
+					&bytesWritten,    // Bytes written
+					nullptr);         // Overlapped
+			}, &hFile);
+			CloseHandle(hFile);
+		}
 		if (update) {
 			SetWindowLayout(GetWindowLayout(hwnd), hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
 			ResetListBoxContent(Memory::GlobalAllocator, hwndList);
 			RedrawMemoryChart(hwndChart, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
+			return 0;
 		}
-	};
+		break;
+	}
 	case WM_NOTIFY:
 		break;
 	case WM_CTLCOLORSTATIC:

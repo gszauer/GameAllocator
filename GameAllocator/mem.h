@@ -142,8 +142,9 @@ namespace Memory {
 	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
 
 	namespace Debug {
-		typedef void (*DumpCallback)(const u8* mem, u32 size);
-		void DumpAllocator(Allocator* allocator, DumpCallback callback);
+		typedef void (*DumpCallback)(const u8* mem, u32 size, void* userdata);
+		void DumpAllocator(Allocator* allocator, DumpCallback callback, void* userdata = 0);
+		void DumpPage(Allocator* allocator, u32 page, DumpCallback callback, void* userdata = 0);
 	}
 }
 

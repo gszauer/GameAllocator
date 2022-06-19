@@ -1187,7 +1187,7 @@ namespace Memory {
 	} // namespace Debug
 } // namespace Memory
 
-void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
+void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback, void* userdata) {
 	const char* l = "Memory::Debug::DumpAllocationHeaders";
 
 	u8* debugPage = AllocatorAllocatable(allocator) - PageSize; // Debug page is always one page before allocatable
@@ -1244,7 +1244,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 
 	// Dump what's been written so far
 	mem = i_to_a_buff + i_to_a_buff_size;
-	callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+	callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 	// Reset memory buffer
 	Set(debugPage, 0, debugSize, l);
@@ -1311,7 +1311,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 
 	// Dump what's been written so far
 	mem = i_to_a_buff + i_to_a_buff_size;
-	callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+	callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 	// Reset memory buffer
 	Set(debugPage, 0, debugSize, l);
@@ -1401,7 +1401,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 			if (memSize < PageSize / 4) { // Drain occasiaonally
 				// Dump what's been written so far
 				mem = i_to_a_buff + i_to_a_buff_size;
-				callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+				callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 				// Reset memory buffer
 				Set(debugPage, 0, debugSize, l);
@@ -1414,7 +1414,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 		if (memSize != PageSize - i_to_a_buff_size) { // Drain if needed
 			// Dump what's been written so far
 			mem = i_to_a_buff + i_to_a_buff_size;
-			callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+			callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 			// Reset memory buffer
 			Set(debugPage, 0, debugSize, l);
@@ -1430,7 +1430,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 	mem = i_to_a_buff + i_to_a_buff_size;
 	memSize = PageSize - i_to_a_buff_size;
 
-	constexpr str_const newline("\n");
+	constexpr str_const newline("\n\t");
 	constexpr str_const isSet("0");
 	constexpr str_const notSet("-");
 
@@ -1438,7 +1438,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 		u32 numPages = allocator->size / Memory::PageSize;
 		u32* mask = (u32*)AllocatorPageMask(allocator);
 
-		constexpr str_const out5("\nPage chart:\n");
+		constexpr str_const out5("\nPage chart:\n\t");
 		Copy(mem, out5.begin(), out5.size(), l);
 		mem += out5.size();
 		memSize -= out5.size();
@@ -1468,7 +1468,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 			if (memSize < PageSize / 4) { // Drain occasiaonally
 				// Dump what's been written so far
 				mem = i_to_a_buff + i_to_a_buff_size;
-				callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+				callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 				// Reset memory buffer
 				Set(debugPage, 0, debugSize, l);
@@ -1481,7 +1481,7 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 		if (memSize != PageSize - i_to_a_buff_size) { // Drain if needed
 			// Dump what's been written so far
 			mem = i_to_a_buff + i_to_a_buff_size;
-			callback(mem, (PageSize - i_to_a_buff_size) - memSize);
+			callback(mem, (PageSize - i_to_a_buff_size) - memSize, userdata);
 
 			// Reset memory buffer
 			Set(debugPage, 0, debugSize, l);
@@ -1492,3 +1492,15 @@ void Memory::Debug::DumpAllocator(Allocator* allocator, DumpCallback callback) {
 	}
 }
 
+void Memory::Debug::DumpPage(Allocator* allocator, u32 page, DumpCallback callback, void* userdata) {
+	u8* mem = (u8*)allocator + page * PageSize;
+	u32 chunk = PageSize / 4; // 1 KiB at the default size.
+
+	callback(mem, chunk, userdata);
+	mem += chunk;
+	callback(mem, chunk, userdata);
+	mem += chunk;
+	callback(mem, chunk, userdata);
+	mem += chunk;
+	callback(mem, chunk, userdata);
+}
