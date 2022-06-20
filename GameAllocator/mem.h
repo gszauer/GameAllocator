@@ -293,7 +293,7 @@ namespace Memory {
 				*(char*)((void*)0) = '\0';
 			}
 #endif
-			return (pointer)Allocate(n, DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
+			return (pointer)Allocate(n * sizeof(T), DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
 		}
 
 		/// Free memory of pointer p
