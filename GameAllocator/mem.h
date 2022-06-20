@@ -8,7 +8,8 @@
 #define MEM_FIRST_FIT 0
 
 // If set to 1, the allocator will clear memory when allocating it
-#define MEM_CLEAR_ON_ALLOC 1
+#define MEM_CLEAR_ON_ALLOC 0
+#define MEM_DEBUG_ON_ALLOC 1
 
 // If set to 1, "C" functions for malloc, free, etc are provided. 
 #define MEM_IMPLEMENT_MALLOC 1
