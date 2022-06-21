@@ -66,34 +66,33 @@ struct MemoryDebugInfo {
 	MemoryDebugInfo(Memory::Allocator* allocator) {
 #if ATLAS_64
 		u64 allocatorHeaderSize = sizeof(Memory::Allocator);
-		u64 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
 #elif ATLAS_32
 		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
-		u32 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
 #endif
-		PageMask = ((u8*)allocator) + allocatorHeaderSize + allocatorHeaderPadding;
+		PageMask = ((u8*)allocator) + allocatorHeaderSize;
 
-		NumberOfPages = allocator->size / Memory::PageSize; // 1 page = 4096 bytes, how many are needed
-		assert(allocator->size % Memory::PageSize == 0, "Allocator size should line up with page size");
+		NumberOfPages = allocator->size / allocator->pageSize; // 1 page = 4096 bytes, how many are needed
+		assert(allocator->size % allocator->pageSize == 0, "Allocator size should line up with page size");
 		
 		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
 		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
-		u32 numberOfMasksUsed = metaDataSizeBytes / Memory::PageSize;
-		if (metaDataSizeBytes % Memory::PageSize != 0) {
+		u32 numberOfMasksUsed = metaDataSizeBytes / allocator->pageSize;
+		if (metaDataSizeBytes % allocator->pageSize != 0) {
 			numberOfMasksUsed += 1;
 		}
-		metaDataSizeBytes = numberOfMasksUsed * Memory::PageSize; // This way, allocatable will start on a page boundary
+		metaDataSizeBytes = numberOfMasksUsed * allocator->pageSize; // This way, allocatable will start on a page boundary
 
 		// Account for meta data
-		metaDataSizeBytes += Memory::PageSize;
+		metaDataSizeBytes += allocator->pageSize;
 		numberOfMasksUsed += 1;
 
 		u32 allocatorOverheadBytes = metaDataSizeBytes;
-		assert(allocatorOverheadBytes % Memory::PageSize == 0, "Offset to allocatable should always line up with page size");
+		assert(allocatorOverheadBytes % allocator->pageSize == 0, "Offset to allocatable should always line up with page size");
 
 		NumFreePages = 0;
 		NumUsedPages = 0;
-		NumOverheadPages = allocatorOverheadBytes / Memory::PageSize; // No need for a +1 padding allocatorOverheadBytes should be aligned to Memory::PageSize
+		NumOverheadPages = allocatorOverheadBytes / allocator->pageSize; // No need for a +1 padding allocatorOverheadBytes should be aligned to Memory::PageSize
+		//NumOverheadPages += 1; // Debug tracker page
 
 		u32* mask = (u32*)PageMask;
 		for (int page = NumOverheadPages; page < NumberOfPages; ++page) { // Don't start at page 0?
@@ -121,7 +120,7 @@ struct MemoryDebugInfo {
 
 private:
 	static inline u32 AllocatorPageMaskSize(Memory::Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
-		u32 allocatorNumberOfPages = allocator->size / Memory::PageSize; // 1 page = 4096 bytes, how many are needed
+		u32 allocatorNumberOfPages = allocator->size / allocator->pageSize; // 1 page = 4096 bytes, how many are needed
 		//assert(allocator->size % PageSize == 0, "Allocator size should line up with page size");
 		// allocatorNumberOfPages is the number of bits that are required to track memory
 
@@ -134,8 +133,7 @@ private:
 
 	static inline u32 AllocatorPaddedSize() {
 		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
-		u32 allocatorHeaderPadding = (((allocatorHeaderSize % Memory::DefaultAlignment) > 0) ? Memory::DefaultAlignment - (allocatorHeaderSize % Memory::DefaultAlignment) : 0);
-		return allocatorHeaderSize + allocatorHeaderPadding;
+		return allocatorHeaderSize;
 	}
 };
 
@@ -311,11 +309,11 @@ void SetWindowLayout(const Win32WindowLayout& layout, HWND chart, HWND* labels, 
 	wsprintfW(displaybuffer, L"Requested: %d bytes (~%d MiB)", allocator->requested, mib);
 	SetWindowText(labels[2], displaybuffer);
 
-	kib = (memInfo.NumUsedPages * Memory::PageSize) / 1024;
+	kib = (memInfo.NumUsedPages * allocator->pageSize) / 1024;
 	mib = kib / 1024;// +(kib % 1024 ? 1 : 0);
 	// kib = (memInfo.NumUsedPages * Memory::PageSize) / 1024 + ((memInfo.NumUsedPages * Memory::PageSize) % 1024 ? 1 : 0);
 
-	wsprintfW(displaybuffer, L"Served: %d bytes (~%d MiB)", memInfo.NumUsedPages * Memory::PageSize, mib);
+	wsprintfW(displaybuffer, L"Served: %d bytes (~%d MiB)", memInfo.NumUsedPages * allocator->pageSize, mib);
 	SetWindowText(labels[3], displaybuffer);
 
 	SetWindowPos(list, 0, layout.bottomCenterArea.left, layout.bottomCenterArea.top, layout.bottomCenterArea.right - layout.bottomCenterArea.left, layout.bottomCenterArea.bottom - layout.bottomCenterArea.top, /*SWP_NOZORDER*/0);
@@ -376,9 +374,13 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 			len += 1;
 		}
 
-		u32 allocationHeaderPadding = sizeof(Memory::Allocation) % iter->alignment > 0 ? iter->alignment - sizeof(Memory::Allocation) % iter->alignment : 0;
+		u32 allocationHeaderPadding = 0;
+		if (iter->alignment != 0) {  // Add padding to the header to compensate for alignment
+			allocationHeaderPadding = iter->alignment - 1; // Somewhere in this range, we will be aligned
+		}
+
 		u32 paddedSize = iter->size + sizeof(Memory::Allocation) + allocationHeaderPadding;
-		u32 pages = paddedSize / Memory::PageSize + (paddedSize % Memory::PageSize ? 1 : 0);
+		u32 pages = paddedSize / allocator->pageSize + (paddedSize % allocator->pageSize ? 1 : 0);
 		wsprintfW(displaybuffer, L"Size: %d/%d bytes, Pages: %d, >", iter->size, paddedSize, pages);
 		wchar_t* print_to = displaybuffer;
 		while (*print_to != L'>') {
@@ -916,9 +918,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				assert(iter != 0);
 				for (; iter != 0 && counter != selection; iter = iter->next, counter++);
 				assert(counter == selection);
-				u32 allocationHeaderSize = sizeof(Memory::Allocation);
-				u32 allocationHeaderPadding = sizeof(Memory::Allocation) % iter->alignment > 0 ? iter->alignment - sizeof(Memory::Allocation) % iter->alignment : 0;
-				u8* mem = (u8*)iter + allocationHeaderSize + allocationHeaderPadding;
+				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 				free(mem);
 			}
 			update = true;
@@ -927,10 +927,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 			Memory::Allocation* iter = Memory::GlobalAllocator->active;
 			while (iter != 0) {
 				Memory::Allocation* next = iter->next;
-
-				const u32 allocationHeaderSize = sizeof(Memory::Allocation);
-				const u32 allocationHeaderPadding = sizeof(Memory::Allocation) % iter->alignment > 0 ? iter->alignment - sizeof(Memory::Allocation) % iter->alignment : 0;
-				u8* mem = (u8*)iter + allocationHeaderSize + allocationHeaderPadding;
+				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 				free(mem);
 
 				iter = next;
@@ -943,6 +940,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		if (LOWORD(wParam) == ID_DUMP_ALLOC) {
 			update = true;
 
+			DeleteFile(L"MemInfo.txt");
 			HANDLE hFile = CreateFile(
 				L"MemInfo.txt",     // Filename
 				GENERIC_WRITE,          // Desired access
@@ -953,7 +951,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				NULL);                  // Template file handle
 			assert(hFile != INVALID_HANDLE_VALUE);
 
-			Memory::Debug::DumpAllocator(Memory::GlobalAllocator, [](const u8* mem, u32 size, void* fileHandle) {
+			Memory::Debug::MemInfo(Memory::GlobalAllocator, [](const u8* mem, u32 size, void* fileHandle) {
 				HANDLE file = *(HANDLE*)fileHandle;
 				DWORD bytesWritten;
 				WriteFile(
@@ -1072,10 +1070,43 @@ extern "C" DWORD CALLBACK run() {
 	unsigned int size = MB(512);
 
 	LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	Memory::GlobalAllocator = Memory::Initialize(memory, size);
+
+	void* m = memory;
+	u32 trimmed = Memory::AlignAndTrim(&m, &size, Memory::DefaultPageSize);
+	Memory::GlobalAllocator = Memory::Initialize(m, size, Memory::DefaultPageSize);
+	assert((u64)((void*)Memory::GlobalAllocator) % 8 == 0);
 
 	int* test = new int;
 	int* test2 = new int[5];
+	int* test3 = (int*)malloc(12);
+
+	{
+		void* mem = Memory::Allocate(10, 3);
+		u64 addy = (u64)mem;
+		u32 mod3 = addy % 3;
+		assert(mod3 == 0);
+		Memory::Release(mem);
+	}
+
+	{
+		void* mem = Memory::Allocate(10, 0);
+		Memory::Release(mem);
+	}
+
+	for (int i = 1; i < 29; ++i) {
+		void* mem = Memory::Allocate(10, i);
+		u64 addy = (u64)mem;
+		u32 mod3 = addy % i;
+		assert(mod3 == 0);
+		Memory::Release(mem);
+	}
+
+	free(test3);
+	delete test;
+	delete[] test2;
+
+	Memory::GlobalAllocator->scanBit = 0;
+
 
 	CreateMemoryWindow();
 
@@ -1091,8 +1122,15 @@ extern "C" DWORD CALLBACK run() {
 		Sleep(1);
 	} while (gMemoryWindow != 0);
 
-	delete test;
-	delete[] test2;
+	// Free up any dangling memory (maybe add to debug?)
+	Memory::Allocation* iter = Memory::GlobalAllocator->active;
+	while (iter != 0) {
+		Memory::Allocation* next = iter->next;
+		u8* mem = (u8*)iter + sizeof(Memory::Allocation);
+		free(mem);
+
+		iter = next;
+	}
 
 	Memory::Shutdown(Memory::GlobalAllocator);
 	Memory::GlobalAllocator = 0;

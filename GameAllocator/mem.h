@@ -8,8 +8,8 @@
 #define MEM_FIRST_FIT 0
 
 // If set to 1, the allocator will clear memory when allocating it
-#define MEM_CLEAR_ON_ALLOC 0
-#define MEM_DEBUG_ON_ALLOC 1
+#define MEM_CLEAR_ON_ALLOC 0 // Clears memory on each allocation
+#define MEM_DEBUG_ON_ALLOC 0 // Fills memory with Memory- on each allocation
 
 // If set to 1, "C" functions for malloc, free, etc are provided. 
 #define MEM_IMPLEMENT_MALLOC 1
@@ -71,9 +71,20 @@ static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #define ATLAS_32 1
 #endif
 
+// TODO: Why am i even using pointers here, anywhere!?!?!?
+// The Allocation struct is only accessible inside mem.cpp
+// and instead of pointers, i could use integer offsets
+// after all, i know only 4 GiB is supported....
+
+// TODO: When implementing the above, remove location
+// from the Allocation struct. 
+
 namespace Memory {
-	typedef void (*AllocationCallback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
-	typedef void (*ReleaseCallback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+	typedef void (*Callback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
+
+	struct Ptr32 { // TODO: Move pointers to be this offset instead of an actual pointer
+		u32 offset;
+	};
 
 	struct Allocation {
 		Allocation* prev;
@@ -92,6 +103,9 @@ namespace Memory {
 	};
 
 	struct Allocator {
+		Callback allocateCallback;
+		Callback releaseCallback;
+
 		Allocation* free_64;
 		Allocation* free_128;
 		Allocation* free_256;
@@ -101,16 +115,13 @@ namespace Memory {
 
 		Allocation* active;
 
-		AllocationCallback allocateCallback;
-		ReleaseCallback releaseCallback;
-
 		u32 size; // In bytes, how much total memory is the allocator managing
 		u32 requested; // How many bytes where requested (raw)
-		u32 offsetToAllocatable;
+		u32 pageSize;
 		u32 scanBit;
 
 		u32 numPagesUsed;
-		u32 padding_64bit;
+		u32 peekPagesUsed;
 
 #if ATLAS_32
 		u32 padding_32bit[9];
@@ -118,36 +129,39 @@ namespace Memory {
 	};
 
 	extern Allocator* GlobalAllocator;
-	const u32 DefaultAlignment = 4;
-	const u32 PageSize = 4096;
+	const u32 DefaultPageSize = 4096;
 	const u32 TrackingUnitSize = 32;
 
 	// You can call AlignAndTrim before Initialize to make sure that memory is aligned to DefaultAlignment
 	// and to make sure that the size of the memory (after it's been aligned) is a multiple of PageSize
 	// both arguments are modified, the return value is how many bytes where removed
-	u32 AlignAndTrim(void** memory, u32* size);
+	u32 AlignAndTrim(void** memory, u32* size, u32 pageSize = DefaultPageSize);
 
-	Allocator* Initialize(void* memory, u32 bytes);
+	Allocator* Initialize(void* memory, u32 bytes, u32 pageSize = DefaultPageSize);
 	void Shutdown(Allocator* allocator);
 
 	Allocator* GetGlobalAllocator();
 	void SetGlobalAllocator(Allocator* allocator);
 
-	void* Allocate(u32 bytes, u32 alignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
+	void* Allocate(u32 bytes, u32 alignment = 0, const char* location = 0, Allocator* allocator = 0);
 	void Release(void* memory, const char* location = 0, Allocator* allocator = 0);
 
 	void Set(void* memory, u8 value, u32 size, const char* location = 0);
 	void Copy(void* dest, const void* source, u32 size, const char* location = 0);
 
-	void* AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
-	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = DefaultAlignment, const char* location = 0, Allocator* allocator = 0);
+	void* AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment = 0, const char* location = 0, Allocator* allocator = 0);
+	void* ReAllocate(void* mem, u32 newSize, u32 newAlignment = 0, const char* location = 0, Allocator* allocator = 0);
 
 	namespace Debug {
-		typedef void (*DumpCallback)(const u8* mem, u32 size, void* userdata);
-		void DumpAllocator(Allocator* allocator, DumpCallback callback, void* userdata = 0);
-		void DumpPage(Allocator* allocator, u32 page, DumpCallback callback, void* userdata = 0);
+		typedef void (*WriteCallback)(const u8* mem, u32 size, void* userdata);
+		void MemInfo(Allocator* allocator, WriteCallback callback, void* userdata = 0);
+		void PageContent(Allocator* allocator, u32 page, WriteCallback callback, void* userdata = 0);
+		u8* DevPage(Allocator* allocator);
 	}
 }
+
+static_assert (sizeof(Memory::Allocator) % 8 == 0, "Memory::Allocator size needs to be 8 byte alignable for the allocation mask to start on u64 alignment without any padding");
+static_assert (sizeof(Memory::Allocation) % 8 == 0, "Memory::Allocation should be 8 byte alignable");
 
 static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");
 static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 32 bytes (256 bits)");
@@ -173,17 +187,16 @@ extern "C" void* __cdecl memset(void* mem, i32 value, decltype(sizeof(0)) size);
 extern "C" void* __cdecl memcpy(void* dest, const void* src, decltype(sizeof(0)) size);
 extern "C" void* __cdecl calloc(decltype(sizeof(0)) count, decltype(sizeof(0)) size);
 extern "C" void* __cdecl realloc(void* mem, decltype(sizeof(0)) size);
-//#pragma intrinsic(memset, memcpy); // This is what we DON't WANT
 #pragma function(memset, memcpy); // Function, not intrinsic
 #endif
 
 #if MEM_DEFINE_MALLOC
-#define malloc(bytes) Memory::Allocate(bytes, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#define malloc(bytes) Memory::Allocate(bytes, 0, __LOCATION__, Memory::GlobalAllocator)
 #define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
 #define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
 #define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
-#define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
-#define realloc(mem, size) Memory::ReAllocate(mem, size, Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, 0, __LOCATION__, Memory::GlobalAllocator)
+#define realloc(mem, size) Memory::ReAllocate(mem, size, 0, __LOCATION__, Memory::GlobalAllocator)
 #endif
 
 #if MEM_IMPLEMENT_NEW
@@ -293,7 +306,7 @@ namespace Memory {
 				*(char*)((void*)0) = '\0';
 			}
 #endif
-			return (pointer)Allocate(n * sizeof(T), DefaultAlignment, "STLAllocator::allocate", GlobalAllocator);
+			return (pointer)Allocate(n * sizeof(T), 0, "STLAllocator::allocate", GlobalAllocator);
 		}
 
 		/// Free memory of pointer p
@@ -335,8 +348,7 @@ namespace Memory {
 				*(char*)((void*)0) = '\0';
 			}
 #endif
-			//return size_type(-1);
-			return GlobalAllocator->size - GlobalAllocator->offsetToAllocatable;
+			return GlobalAllocator->size;
 		}
 
 		/// A struct to rebind the allocator to another allocator of type U
@@ -349,7 +361,7 @@ namespace Memory {
 #endif
 
 #if MEM_DEFINE_NEW
-#define new new(Memory::DefaultAlignment, __LOCATION__, Memory::GlobalAllocator)
+#define new new(0, __LOCATION__, Memory::GlobalAllocator)
 #endif
 
 #if _WIN64

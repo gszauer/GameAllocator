@@ -1,12 +1,16 @@
-Tracking 131072 pages, size: 524288 KiB (512 MiB)
-Page breakdown: 131065 free, 1 used, 6 overhead
+Tracking 131072 pages, page size: 4096 bytes
+Total memory size: 524288 KiB (512 MiB)
+Page state: 131064 free, 2 used, 6 overhead
+Requested: 4096 bytes, Served: 8192 bytes
 
-Active List:
-	34631552, size: 20 / 52, alignment: 4, prev: 0, next: 34631616
-	34631616, size: 4 / 36, alignment: 4, prev: 34631552, next: 0
+Active allocations:
+	35024896, size: 1024 / 1056, alignment: 0, first page: 7, prev: 0, next: 35026944, location: On line: 909, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	35026944, size: 1024 / 1056, alignment: 0, first page: 7, prev: 35024896, next: 35020800, location: On line: 909, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	35020800, size: 1024 / 1056, alignment: 0, first page: 6, prev: 35026944, next: 35022848, location: On line: 909, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	35022848, size: 1024 / 1056, alignment: 0, first page: 6, prev: 35020800, next: 0, location: On line: 909, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
 
 Page chart:
-	0000000-------------------------------------------------------------------------
+	00000000------------------------------------------------------------------------
 	--------------------------------------------------------------------------------
 	--------------------------------------------------------------------------------
 	--------------------------------------------------------------------------------
