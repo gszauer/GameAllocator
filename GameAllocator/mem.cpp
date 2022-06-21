@@ -49,6 +49,63 @@ namespace Memory {
 		return allocatorPageArraySize * (TrackingUnitSize / 8); // In bytes, not bits
 	}
 
+	static inline void RemoveFromList(Allocator* allocator, Allocation** list, Allocation* allocation) {
+		u32 allocationOffset = (u32)((u8*)allocation - (u8*)allocator);
+		u32 listOffset = (u32)((u8*)(*list) - (u8*)allocator);
+		
+		Allocation* head = *list;
+
+		if (head == allocation) { // Removing head
+			if (head->nextOffset != 0) { // There is a next
+				Allocation* allocNext = 0;
+				if (allocation->nextOffset != 0) {
+					allocNext = (Allocation*)((u8*)allocator + allocation->nextOffset);
+				}
+				Allocation* headerNext = 0;
+				if (head->nextOffset != 0) {
+					headerNext = (Allocation*)((u8*)allocator + head->nextOffset);
+				}
+				assert(allocNext == headerNext, "");
+				assert(headerNext->prevOffset == allocationOffset, "");
+				headerNext->prevOffset = 0;
+			}
+			Allocation* next = 0;
+			if (head != 0 && head->nextOffset != 0) {
+				next = (Allocation*)((u8*)allocator + head->nextOffset);
+			}
+			*list = next;
+		}
+		else {
+			if (allocation->nextOffset != 0) {
+				Allocation* _next = (Allocation*)((u8*)allocator + allocation->nextOffset);
+				assert(_next->prevOffset == allocationOffset, "");
+				_next->prevOffset = allocation->prevOffset;
+			}
+			if (allocation->prevOffset != 0) {
+				Allocation* _prev = (Allocation*)((u8*)allocator + allocation->prevOffset);
+				assert(_prev->nextOffset == allocationOffset, "");
+				_prev->nextOffset = allocation->nextOffset;
+			}
+		}
+
+		allocation->prevOffset = 0;
+		allocation->nextOffset = 0;
+	}
+
+	static inline void AddtoList(Allocator* allocator, Allocation** list, Allocation* allocation) {
+		u32 allocationOffset = (u32)((u8*)allocation - (u8*)allocator);
+		u32 listOffset = (u32)((u8*)(*list) - (u8*)allocator);
+		Allocation* head = *list;
+
+		allocation->prevOffset = 0;
+		allocation->nextOffset = 0;
+		if (head != 0) {
+			allocation->nextOffset = listOffset;
+			head->prevOffset = allocationOffset;
+		}
+		*list = allocation;
+	}
+
 	// Returns 0 on error. Since the first page is always tracking overhead it's invalid for a range
 	static inline u32 FindRange(Allocator* allocator, u32 numPages, u32 searchStartBit) {
 		assert(allocator != 0, "");
@@ -250,16 +307,15 @@ namespace Memory {
 				mem += blockSize;
 
 				// Initialize the allocation header
-				alloc->prev = 0;
+				alloc->prevOffset = 0;
+				alloc->nextOffset = 0;
 				alloc->size = 0;
-				alloc->next = *freeList;
 				alloc->alignment = 0;
+#if MEM_TRACK_LOCATION
 				alloc->location = location;
+#endif
 
-				if (*freeList != 0) {
-					(*freeList)->prev = alloc;
-				}
-				*freeList = alloc;
+				AddtoList(allocator, freeList, alloc);
 			}
 		}
 		assert(*freeList != 0, "The free list literally can't be zero here...");
@@ -280,27 +336,23 @@ namespace Memory {
 			}
 		}
 #endif
-		if ((*freeList)->next != 0) {
-			(*freeList)->next->prev = 0;
+		if ((*freeList)->nextOffset != 0) { // Advance one
+			Allocation* _next = (Allocation*)((u8*)allocator + (*freeList)->nextOffset);
+			_next->prevOffset = 0;
+			*freeList = (Allocation*)((u8*)allocator + (*freeList)->nextOffset); // freeList = freeList.next
 		}
-		*freeList = (*freeList)->next;
+		else {
+			*freeList = 0;
+		}
 
-		block->prev = 0;
+		block->prevOffset = 0;
 		block->size = requestedBytes;
-		block->location = location;
 		block->alignment = 0;
-
-		// Track the sub allocator
-		block->next = allocator->active;
-		if (allocator->active != 0) {
-			allocator->active->prev = block;
-		}
-		allocator->active = block;
-
-#if 0 & _DEBUG
-		u32 freeListcount = 0;
-		for (Allocation* iter = *freeList; iter != 0; iter = iter->next, freeListcount += 1);
+#if MEM_TRACK_LOCATION
+		block->location = location;
 #endif
+
+		AddtoList(allocator, &allocator->active, block); // Sets block->next
 
 		if (allocator->allocateCallback != 0) {
 #if ATLAS_64
@@ -322,40 +374,18 @@ namespace Memory {
 		Allocation* header = (Allocation*)((u8*)memory - sizeof(Allocation));
 		assert(header->size != 0, "Double Free!"); // Make sure it's not a double free
 		if (header->size == 0) {
+			assert(false, "");
 			return;
 		}
 		header->size = 0;
 
 		// Now remove from the active list.
-		if (header == allocator->active) { // Removing head
-			if (allocator->active->next != 0) {
-				assert(allocator->active->next->prev == allocator->active, "");
-				allocator->active->next->prev = 0;
-			}
-			allocator->active = allocator->active->next;
-		}
-		else { // Removing link
-			if (header->next != 0) {
-				assert(header->next->prev == header, "");
-				header->next->prev = header->prev;
-			}
-			if (header->prev != 0) {
-				assert(header->prev->next == header, "");
-				header->prev->next = header->next;
-			}
-		}
-
+		RemoveFromList(allocator, &allocator->active, header);
 		// Add memory back into the free list
-		if (*freeList != 0) {
-			assert((*freeList)->prev == 0, "");
-			(*freeList)->prev = header;
-		}
-		header->next = *freeList;
-		header->prev = 0;
-#if _DEBUG
+		AddtoList(allocator, freeList, header);
+#if _DEBUG & MEM_TRACK_LOCATION
 		header->location = "SubRelease released this block";
 #endif
-		*freeList = header;
 
 		// Find the first allocation inside the page
 #if ATLAS_64
@@ -389,25 +419,7 @@ namespace Memory {
 				mem += blockSize;
 				assert(iter != 0, "");
 
-				if (*freeList == iter) { // Removing head, advance list
-					*freeList = (*freeList)->next;
-					if ((*freeList) != 0) {
-						assert((*freeList)->prev == iter, "");
-						(*freeList)->prev = 0;
-					}
-				}
-				else { // Unlink not head
-					if (iter->next != 0) {
-						assert(iter->next->prev == iter, "Sub-release, unexpected active link...");
-						iter->next->prev = iter->prev;
-					}
-					if (iter->prev != 0) {
-						assert(iter->prev->next == iter, "Sub-release, unexpected active link...");
-						iter->prev->next = iter->next;
-					}
-				}
-				iter->prev = 0;
-				iter->next = 0;
+				RemoveFromList(allocator, freeList, iter);
 			}
 
 			// Clear the tracking bits
@@ -803,18 +815,15 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 
 	allocation->alignment = alignment;
 	allocation->size = bytes;
+	allocation->prevOffset = 0;
+	allocation->nextOffset = 0;
+#if MEM_TRACK_LOCATION
 	allocation->location = location;
-	allocation->prev = 0;
-	allocation->next = 0;
+#endif
 
 	// Track allocated memory
 	assert(allocation != allocator->active, ""); // Should be impossible, but we could have bugs...
-	if (allocator->active != 0) {
-		allocation->next = allocator->active;
-		assert(allocator->active->prev == 0, "");
-		allocator->active->prev = allocation;
-	}
-	allocator->active = allocation;
+	AddtoList(allocator, &allocator->active, allocation);
 
 	// Return memory
 #if MEM_CLEAR_ON_ALLOC
@@ -850,6 +859,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	u8* mem = (u8*)memory;
 	mem -= sizeof(Allocation);
 	Allocation* allocation = (Allocation*)mem;
+	assert(allocation != 0, "Can't free null");
 	u32 alignment = allocation->alignment;
 	
 	u32 allocationSize = allocation->size; // Add enough space to pad out for alignment
@@ -906,16 +916,7 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	ClearRange(allocator, firstPage, numPages);
 
 	// Unlink tracking
-	if (allocation->next != 0) {
-		allocation->next->prev = allocation->prev;
-	}
-	if (allocation->prev != 0) {
-		allocation->prev->next = allocation->next;
-	}
-	if (allocation == allocator->active) {
-		assert(allocation->prev == 0, "");
-		allocator->active = allocation->next;
-	}
+	RemoveFromList(allocator, &allocator->active, allocation);
 
 	// Set the size to 0, to indicate that this header has been free-d
 	allocation->size = 0;
@@ -1342,8 +1343,8 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out0.size();
 		memSize -= out0.size();
 
-		for (Allocation* iter = allocator->active; iter != 0; iter = iter->next) {
-			u64 address = (u64)((void*)iter);
+		for (Allocation* iter = allocator->active; iter != 0; iter = (iter->nextOffset == 0)? 0 : (Allocation*)((u8*)allocator + iter->nextOffset)) {
+			//u64 address = (u64)((void*)iter);
 			u64 alloc_address = (u64)((void*)allocator);
 
 			constexpr str_const out5("\t");
@@ -1351,7 +1352,8 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out5.size();
 			memSize -= out5.size();
 
-			i32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			u32 allocationOffset = (u32)((u8*)iter - (u8*)allocator);
+			i32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, allocationOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1398,7 +1400,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += outfp.size();
 			memSize -= outfp.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, (address - alloc_address) / allocator->pageSize);
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, (allocationOffset) / allocator->pageSize);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1408,8 +1410,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out0.size();
 			memSize -= out0.size();
 
-			address = (u64)((void*)(iter->prev));
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->prevOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1419,13 +1420,15 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out1.size();
 			memSize -= out1.size();
 
-			address = (u64)((void*)(iter->next));
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, address);
+			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->nextOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
 
-			u32 pathLen = strlen((const u8*)iter->location);
+			u32 pathLen = 0;
+#if MEM_TRACK_LOCATION
+			pathLen = strlen((const u8*)iter->location);
+#endif
 
 			if (memSize < allocator->pageSize / 4 || memSize < (pathLen + pathLen / 4)) { // Drain occasiaonally
 				// Dump what's been written so far
@@ -1444,7 +1447,11 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out_loc.size();
 			memSize -= out_loc.size();
 
+#if MEM_TRACK_LOCATION
 			if (iter->location == 0) {
+#else
+			{
+#endif
 				assert(pathLen == 0, "");
 				
 				constexpr str_const out_loc("null");
@@ -1452,12 +1459,14 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 				mem += out_loc.size();
 				memSize -= out_loc.size();
 			}
+#if MEM_TRACK_LOCATION
 			else {
 				assert(pathLen != 0, "");
 				Copy(mem, iter->location, pathLen, l);
 				mem += pathLen;
 				memSize -= pathLen;
 			}
+#endif
 
 			constexpr str_const out4("\n");
 			Copy(mem, out4.begin(), out4.size(), l);

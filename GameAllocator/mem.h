@@ -29,6 +29,9 @@
 // Disables sub-allocators if defined
 #define MEM_USE_SUBALLOCATORS 1
 
+// If true, adds char* to each allocation
+#define MEM_TRACK_LOCATION 1
+
 #ifndef ATLAS_U8
 #define ATLAS_U8
 typedef unsigned char u8;
@@ -71,35 +74,21 @@ static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #define ATLAS_32 1
 #endif
 
-// TODO: Why am i even using pointers here, anywhere!?!?!?
-// The Allocation struct is only accessible inside mem.cpp
-// and instead of pointers, i could use integer offsets
-// after all, i know only 4 GiB is supported....
-
-// TODO: When implementing the above, remove location
-// from the Allocation struct. 
-
 namespace Memory {
 	typedef void (*Callback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
-
-	struct Ptr32 { // TODO: Move pointers to be this offset instead of an actual pointer
-		u32 offset;
-	};
+	typedef u32 Offset32;
 
 	struct Allocation {
-		Allocation* prev;
-		Allocation* next;
+#if MEM_TRACK_LOCATION
 		const char* location;
-		u32 size; // Unpadded allocation size. total size is size + sizeof(Allocation) + paddingof(Allocation)
-		u32 alignment;
-
-		/* To get the actual allocation size:
-		u32 allocationHeaderPadding = sizeof(Allocation) % alignment > 0 ? alignment - sizeof(Allocation) % alignment : 0;
-		u32 paddedSize = size + sizeof(Memory::Allocation) + allocationHeaderPadding;
-		*/
 #if ATLAS_32
-		u32 padding_32bit[3];
+		u32 padding_32bit;
 #endif
+#endif
+		Offset32 prevOffset;
+		Offset32 nextOffset;
+		u32 size; // Unpadded allocation size
+		u32 alignment;
 	};
 
 	struct Allocator {
@@ -164,7 +153,11 @@ static_assert (sizeof(Memory::Allocator) % 8 == 0, "Memory::Allocator size needs
 static_assert (sizeof(Memory::Allocation) % 8 == 0, "Memory::Allocation should be 8 byte alignable");
 
 static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");
-static_assert (sizeof(Memory::Allocation) == 32, "Memory::Allocation should be 32 bytes (256 bits)");
+#if MEM_TRACK_LOCATION
+static_assert (sizeof(Memory::Allocation) == 24, "Memory::Allocation should be 24 bytes (192 bits)");
+#else
+static_assert (sizeof(Memory::Allocation) == 16, "Memory::Allocation should be 16 bytes (128 bits)");
+#endif
 
 // https://stackoverflow.com/questions/2653214/stringification-of-a-macro-value
 #define atlas_xstr(a) atlas_str(a)

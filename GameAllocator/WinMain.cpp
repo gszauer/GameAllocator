@@ -366,9 +366,12 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 	SendMessage(list, LB_RESETCONTENT, 0, 0);
 
 	wchar_t displaybuffer[1024];
-	for (Memory::Allocation* iter = allocator->active; iter != 0; iter = iter->next) {
+	for (Memory::Allocation* iter = allocator->active; iter != 0; iter = (iter->nextOffset == 0) ? 0 : (Memory::Allocation*)((u8*)allocator + iter->nextOffset)) {
 		size_t len = 1; // To account for '\0' at the end of the string.
-		char* it = (char*)iter->location;
+		char* it = 0;
+#if MEM_TRACK_LOCATION
+		it =(char*)iter->location;
+#endif
 		while (it != 0 && len < 1024 - 256) {
 			it += 1;
 			len += 1;
@@ -386,7 +389,9 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 		while (*print_to != L'>') {
 			print_to++;
 		}
+#if MEM_TRACK_LOCATION
 		MultiByteToWideChar(0, 0, iter->location, len, print_to, len);
+#endif
 
 		SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)displaybuffer);
 	}
@@ -916,7 +921,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				int counter = 0;
 				Memory::Allocation* iter = Memory::GlobalAllocator->active;
 				assert(iter != 0);
-				for (; iter != 0 && counter != selection; iter = iter->next, counter++);
+				for (; iter != 0 && counter != selection; iter = (iter->nextOffset == 0)? 0 : (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset), counter++);
 				assert(counter == selection);
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 				free(mem);
@@ -926,7 +931,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		if (LOWORD(wParam) == ID_FREE_MEM_ALL) {
 			Memory::Allocation* iter = Memory::GlobalAllocator->active;
 			while (iter != 0) {
-				Memory::Allocation* next = iter->next;
+				Memory::Allocation* next = 0;
+				if (iter->nextOffset != 0) {
+					next = (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset);
+				}
+
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 				free(mem);
 
@@ -1125,7 +1134,7 @@ extern "C" DWORD CALLBACK run() {
 	// Free up any dangling memory (maybe add to debug?)
 	Memory::Allocation* iter = Memory::GlobalAllocator->active;
 	while (iter != 0) {
-		Memory::Allocation* next = iter->next;
+		Memory::Allocation* next = (iter->nextOffset == 0) ? 0 :  (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset);
 		u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 		free(mem);
 
