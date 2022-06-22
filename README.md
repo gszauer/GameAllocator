@@ -29,8 +29,7 @@ When you are finished with an allocator, clean it up by calling ```Memory::Shutd
 ```
 void run() {
     // Declare how much memory to use
-    // Adding (DefaultPageSize - 1) to size ensures that there is enough space for padding
-    unsigned int size = MB(512) + (DefaultPageSize - 1); 
+    unsigned int size = MB(512);
 
     // Allocate memory from the operating system
     LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); // Windows

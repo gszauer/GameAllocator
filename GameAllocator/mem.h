@@ -70,8 +70,8 @@ Compile flags:
 	MEM_CLEAR_ON_ALLOC    -> When set, memory will be cleared to 0 before being returned from Memory::Allocate
 	                         If both clear and debug on alloc are set, clear will take precedence
 	MEM_DEBUG_ON_ALLOC    -> If set, full page allocations will fill the padding of the page with "-MEMORY"
-	MEM_IMPLEMENT_MALLOC  -> Provide function declarations and implementations for: malloc, free, memset
-	                         memcpy, calloc and realloc. This method can not track allocation location.
+	MEM_IMPLEMENT_MALLOC  -> Provide function declarations and implementations for: malloc, free, memset, and
+	                         memcpy. This method can not track allocation location.
 	MEM_DEFINE_MALLOC     -> If set, malloc will be declared as a #define for Memory::Allocate
 	                         and similarly free will be declared as a #define for Memory::Release
 	MEM_IMPLEMENT_NEW     -> Provide function declarations and implementations for new & delete
