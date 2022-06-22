@@ -1,7 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 
-#include "mem.h"
+#include "../mem.h"
 
 #pragma warning(disable:6011)
 
