@@ -83,7 +83,27 @@ CloseHandle(hFile);
 
 There is a similar ```Memory::Debug::PageContent```, which given a page number will dump the binary conent of a page. The outputof the above log will look something like this:
 
-# TODO: Show output
+```
+Tracking 256 pages, Page size: 4096 bytes
+Total memory size: 1024 KiB (1 MiB)
+Page state: 231 free, 23 used, 2 overhead
+Requested: 60656 bytes, Served: 94208 bytes
+
+Active allocations:
+	114688, size: 4096, padded: 4120, alignment: 0, first page: 28, 
+        prev: 86016, next: 110592, location: On line: 881, in file: 
+        C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	12160, size: 64, padded: 88, alignment: 0, first page: 2, 
+        prev: 16320, next: 0, location: On line: 1064, in file: 
+        C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+    [Rest of active list removed for brevity]
+
+Page chart:
+	000000-0000000-0-00-0000-00000--------------------------------------------------
+	--------------------------------------------------------------------------------
+	--------------------------------------------------------------------------------
+	----------------
+```
 
 # Resources
 
