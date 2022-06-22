@@ -1,19 +1,17 @@
 Tracking 131072 pages, Page size: 4096 bytes
 Total memory size: 524288 KiB (512 MiB)
-Page state: 131062 free, 4 used, 6 overhead
-Requested: 7168 bytes, Served: 16384 bytes
+Page state: 131063 free, 3 used, 6 overhead
+Requested: 5120 bytes, Served: 12288 bytes
 
 Active allocations:
-	38912, size: 1024, padded: 1040, alignment: 0, first page: 9, prev: 0, next: 32768, location: null
-	32768, size: 1024, padded: 1040, alignment: 0, first page: 8, prev: 38912, next: 34816, location: null
-	34816, size: 1024, padded: 1040, alignment: 0, first page: 8, prev: 32768, next: 28672, location: null
-	28672, size: 1024, padded: 1040, alignment: 0, first page: 7, prev: 34816, next: 30720, location: null
-	30720, size: 1024, padded: 1040, alignment: 0, first page: 7, prev: 28672, next: 24576, location: null
-	24576, size: 1024, padded: 1040, alignment: 0, first page: 6, prev: 30720, next: 26624, location: null
-	26624, size: 1024, padded: 1040, alignment: 0, first page: 6, prev: 24576, next: 0, location: null
+	34816, size: 1024, padded: 1048, alignment: 0, first page: 8, prev: 0, next: 28672, location: On line: 894, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	28672, size: 1024, padded: 1048, alignment: 0, first page: 7, prev: 34816, next: 30720, location: On line: 894, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	30720, size: 1024, padded: 1048, alignment: 0, first page: 7, prev: 28672, next: 24576, location: On line: 894, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	24576, size: 1024, padded: 1048, alignment: 0, first page: 6, prev: 30720, next: 26624, location: On line: 894, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
+	26624, size: 1024, padded: 1048, alignment: 0, first page: 6, prev: 24576, next: 0, location: On line: 894, in file: C:\Users\Gabor\Git\GameAllocator\GameAllocator\WinMain.cpp
 
 Page chart:
-	0000000000----------------------------------------------------------------------
+	000000000-----------------------------------------------------------------------
 	--------------------------------------------------------------------------------
 	--------------------------------------------------------------------------------
 	--------------------------------------------------------------------------------

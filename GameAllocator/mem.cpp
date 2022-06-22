@@ -1,23 +1,38 @@
 #include "mem.h"
 
-Memory::Allocator* Memory::GlobalAllocator = 0;
+#pragma warning(disable:6011)
+#pragma warning(disable:28182)
+
+#if MEM_DEFINE_MALLOC
+	#undef malloc
+	#undef free
+	#undef memset
+	#undef memcpy
+#endif
+
+#if MEM_DEFINE_NEW
+	#undef new
+	#undef delete
+#endif
+
+// Game allocator should run without CRT. There is only one global variable, but it should not be initialized.
+Memory::Allocator* Memory::GlobalAllocator;// = 0;
 
 #ifndef ATLAS_U16
-#define ATLAS_U16
-typedef unsigned short u16;
-static_assert (sizeof(u16) == 2, "u16 should be defined as a 2 byte type");
+	#define ATLAS_U16
+	typedef unsigned short u16;
+	static_assert (sizeof(u16) == 2, "u16 should be defined as a 2 byte type");
 #endif 
 
 #if _DEBUG
-#define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
+	#define assert(cond, msg) Memory::Assert(cond, msg, __LINE__, __FILE__)
 #else
-#define assert(cond, msg) ;
+	#define assert(cond, msg) ;
 #endif
-#define NotImplementedException() (*(char*)((void*)0) = '\0');
+
+#define NotImplementedException() (*(char*)((void*)0) = '\0')
 
 namespace Memory {
-	const u32 AllocatorAlignment = 8; // Should stay as 8, even on 32 bit platforms...
-
 	static void Assert(bool condition, const char* msg, u32 line, const char* file) {
 		char* data = (char*)((void*)0);
 		if (condition == false) {
@@ -26,9 +41,6 @@ namespace Memory {
 	}
 
 	static inline u32 AllocatorPaddedSize() {
-		// We no longer need to add any padding because of the assert. sizeof(Allocator) is always 8 byte aligned.
-		// const u32 allocatorHeaderSize = sizeof(Allocator);
-		// const u32 allocatorHeaderPadding = (((allocatorHeaderSize % 8) > 0) ? 8 - (allocatorHeaderSize % 8) : 0);
 		static_assert (sizeof(Memory::Allocator) % AllocatorAlignment == 0, "Memory::Allocator size needs to be 8 byte aligned for the allocation mask to start on this alignment without any padding");
 		return sizeof(Allocator);
 	}
@@ -39,7 +51,7 @@ namespace Memory {
 	}
 
 	static inline u32 AllocatorPageMaskSize(Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
-		const u32 allocatorNumberOfPages = allocator->size / allocator->pageSize; // 1 page = 4096 bytes, how many are needed
+		const u32 allocatorNumberOfPages = allocator->size / allocator->pageSize; // 1 page = (probably) 4096 bytes, how many are needed
 		assert(allocator->size % allocator->pageSize == 0, "Allocator size should line up with page size");
 		// allocatorNumberOfPages is the number of bits that are required to track memory
 
@@ -263,25 +275,12 @@ namespace Memory {
 	}
 
 #if MEM_USE_SUBALLOCATORS
+	// This function will chop the provided page into several blocks. Since the block size is constant, we
+	// know that headers will be laid out at a stride of blockSize. There is no additional tracking needed.
 	void* SubAllocate(u32 requestedBytes, u32 blockSize, Allocation** freeList, const char* location, Allocator* allocator) {
 		assert(blockSize < allocator->pageSize, "Block size must be less than page size");
-		// Sub allocators are always aligned with the Default Alignment. If we didn't do this, we would
-		// have to keep a matrix of block size and alignment, which is too much overhead.
-		
-		// The block size is how fineley to chop up the page. The minimum allocateion size should be 64 bytes.
-		// This is because the Allocation header is 32 bytes its-self, so there is no valid 32 byte allocation.
-		
-		// This function will chop the provided page into several blocks. Since the block size is constant, we
-		// know that headers will be laid out at a stride of blockSize. There is no additional tracking needed.
-
-		// For example, a 4k page could be made up of 64 byte blocks. 4096 / 64 = 64, so we would have 64 64 byte blocks.
-		// If the free list is empty, we fill it by grabbing a page and making 64 free blocks. Each of these blocks
-		// will have a size of 0, and be kept in a free list in the allocator. 
-
-		// Then we grab one of the blocks from the free list, and use it / return it's memory.
 
 		// There is no blocks of the requested size available. Reserve 1 page, and carve it up into blocks.
-		// Add every new block to the free list.
 		bool grabNewPage = *freeList == 0;
 		if (*freeList == 0) {
 			// Find and reserve 1 free page
@@ -299,9 +298,9 @@ namespace Memory {
 			// Figure out how many blocks fit into this page
 			const u32 numBlocks = allocator->pageSize / blockSize;
 			assert(numBlocks > 0, "");
-			assert(numBlocks < 128, ""); // a 32 byte allocation has 128 blocks. The size of PageMemoryAllocationHeader is 32 bytes, so we can't allocate anything smaller (smaller allocations take up more blocks inside the page)
+			assert(numBlocks < 128, "");
 
-			// For each block in this page, initialize it's header
+			// For each block in this page, initialize it's header and add it to the free list
 			for (u32 i = 0; i < numBlocks; ++i) {
 				Allocation* alloc = (Allocation*)mem;
 				mem += blockSize;
@@ -355,11 +354,7 @@ namespace Memory {
 		AddtoList(allocator, &allocator->active, block); // Sets block->next
 
 		if (allocator->allocateCallback != 0) {
-#if ATLAS_64
-			u64 firstPage = (u64)(((u8*)block - (u8*)allocator) / allocator->pageSize);
-#elif ATLAS_32
-			u32 firstPage = (u32)(((u8*)block - (u8*)allocator) / allocator->pageSize);
-#endif
+			u32 firstPage = ((u32)((u8*)block - (u8*)allocator)) / allocator->pageSize;
 			allocator->allocateCallback(allocator, block, requestedBytes, blockSize, firstPage, grabNewPage? 1 : 0);
 		}
 
@@ -388,11 +383,8 @@ namespace Memory {
 #endif
 
 		// Find the first allocation inside the page
-#if ATLAS_64
-		u64 startPage = (u64)((u8*)header - (u8*)allocator) / allocator->pageSize;
-#elif ATLAS_32
 		u32 startPage = (u32)((u8*)header - (u8*)allocator) / allocator->pageSize;
-#endif
+
 		u8* mem =(u8*)allocator + startPage * allocator->pageSize;
 
 		// Each sub allocator page contains multiple blocks. check if all of the blocks 
@@ -432,23 +424,24 @@ namespace Memory {
 		}
 	}
 #endif
-}
+} // Namespace Memory
 
-static_assert (Memory::TrackingUnitSize % Memory::AllocatorAlignment == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
 
-u32 Memory::AlignAndTrim(void** memory, u32* size, u32 pageSize) {
+u32 Memory::AlignAndTrim(void** memory, u32* size, u32 alignment, u32 pageSize) {
 #if ATLAS_64
 	u64 ptr = (u64)((const void*)(*memory));
 #elif ATLAS_32
 	u32 ptr = (u32)((const void*)(*memory));
+#else
+	#error Unknown Platform
 #endif
 	u32 delta = 0;
 
 	// Align to 8 byte boundary. This is so the mask array lines up on a u64
-	if (ptr % AllocatorAlignment != 0) {
+	if (ptr % alignment != 0) {
 		u8* mem = (u8*)(*memory);
 
-		u32 diff = ptr % AllocatorAlignment;
+		u32 diff = ptr % alignment;
 		assert(*size >= diff, "");
 
 		delta += diff;
@@ -475,12 +468,14 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes, u32 pageSize) {
 	u64 ptr = (u64)((const void*)memory);
 #elif ATLAS_32
 	u32 ptr = (u32)((const void*)memory);
+#else
+	#error Unknown platform
 #endif
 	assert(ptr % AllocatorAlignment == 0, "Memory::Initialize, Memory being managed should be 8 byte aligned. Consider using Memory::AlignAndTrim");
 	assert(bytes % pageSize == 0, "Memory::Initialize, the size of the memory being managed must be aligned to Memory::PageSize");
 	assert(bytes / pageSize >= 10, "Memory::Initialize, minimum memory size is 10 pages, page size is Memory::PageSize");
 
-	// Set up the global allocator
+	// Set up the allocator
 	Allocator* allocator = (Allocator*)memory;
 	Set(allocator, 0, sizeof(allocator), "Memory::Initialize");
 	allocator->size = bytes;
@@ -515,14 +510,6 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes, u32 pageSize) {
 	}
 	
 	return (Allocator*)memory;
-}
-
-Memory::Allocator* Memory::GetGlobalAllocator() {
-	return GlobalAllocator;
-}
-
-void Memory::SetGlobalAllocator(Allocator* allocator) {
-	GlobalAllocator = allocator;
 }
 
 void Memory::Shutdown(Allocator* allocator) {
@@ -599,10 +586,10 @@ void Memory::Copy(void* dest, const void* source, u32 size, const char* location
 #endif
 
 #if ATLAS_64
-	u32 size_32 = (size - size_64 * sizeof(u64)) / sizeof(u32);
+	u32 size_32 = (u32)((size - size_64 * sizeof(u64)) / sizeof(u32));
 	u32* dst_32 = (u32*)(dst_64 + size_64);
 	const u32* src_32 = (const u32*)(src_64 + size_64);
-#else
+#else 
 	u32 size_32 = size / sizeof(u32);
 	u32* dst_32 = (u32*)dest;
 	const u32* src_32 = (u32*)source;
@@ -612,7 +599,7 @@ void Memory::Copy(void* dest, const void* source, u32 size, const char* location
 	}
 
 #if ATLAS_64
-	u32 size_16 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32)) / sizeof(u16);
+	u32 size_16 = (u32)((size - size_64 * sizeof(u64) - size_32 * sizeof(u32)) / sizeof(u16));
 #else
 	u32 size_16 = (size - size_32 * sizeof(u32)) / sizeof(u16);
 #endif
@@ -623,7 +610,7 @@ void Memory::Copy(void* dest, const void* source, u32 size, const char* location
 	}
 
 #if ATLAS_64
-	u32 size_8 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
+	u32 size_8 = (u32)(size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
 #else
 	u32 size_8 = (size - size_32 * sizeof(u32) - size_16 * sizeof(u16));
 #endif
@@ -635,8 +622,10 @@ void Memory::Copy(void* dest, const void* source, u32 size, const char* location
 
 #if ATLAS_64
 	assert(size_64 * sizeof(u64) + size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
-#else
+#elif ATLAS_32
 	assert(size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
+#else
+	#error Unknown Platform
 #endif
 }
 
@@ -677,7 +666,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 #endif
 
 #if ATLAS_64
-	u32 size_32 = (size - size_64 * sizeof(u64)) / sizeof(u32);
+	u32 size_32 = (u32)((size - size_64 * sizeof(u64)) / sizeof(u32));
 	u32* ptr_32 = (u32*)(ptr_64 + size_64);;
 #else
 	u32 size_32 = size / sizeof(u32);
@@ -689,7 +678,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	}
 	
 #if ATLAS_64
-	u32 size_16 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32)) / sizeof(u16);
+	u32 size_16 = (u32)((size - size_64 * sizeof(u64) - size_32 * sizeof(u32)) / sizeof(u16));
 #else
 	u32 size_16 = (size - size_32 * sizeof(u32)) / sizeof(u16);
 #endif
@@ -700,7 +689,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	}
 
 #if ATLAS_64
-	u32 size_8 = (size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
+	u32 size_8 = (u32)(size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
 #else
 	u32 size_8 = (size - size_32 * sizeof(u32) - size_16 * sizeof(u16));
 #endif
@@ -711,16 +700,16 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 
 #if ATLAS_64
 	assert(size_64 * sizeof(u64) + size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
-#else
+#elif ATLAS_32
 	assert(size_32 * sizeof(u32) + size_16 * sizeof(u16) + size_8 == size, "Number of pages not adding up");
+#else
+	#error Unknown Platform
 #endif
 }
 
-void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator* allocator) {
-	assert(bytes != 0, "Memory::Allocate can't allocate 0 bytes");
+void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const char* location) {
 	if (bytes == 0) {
-		assert(false, "");
-		return 0;
+		bytes = 1; // At least one byte required
 	}
 	if (allocator == 0) {
 		allocator = GlobalAllocator;
@@ -734,7 +723,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	assert(bytes < allocator->size - allocator->requested, "Memory::Allocate trying to allocate more memory than is available");
 
 	u32 allocationHeaderPadding = 0;
-	if (alignment != 0) { // Add padding to the header to compensate for alignment https://stackoverflow.com/questions/227897/how-to-allocate-aligned-memory-only-using-the-standard-library
+	if (alignment != 0) { // Add paddnig to make sure we can align the memory
 		allocationHeaderPadding = alignment - 1; // Somewhere in this range, we will be aligned
 	}
 	u32 allocationHeaderSize = sizeof(Allocation) + allocationHeaderPadding;
@@ -792,9 +781,15 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	// Fill out header
 	u8* mem = (u8*)allocator + firstPage * allocator->pageSize;
 
-	u32 alignmentOffset = 0; // Align the memory https://stackoverflow.com/questions/227897/how-to-allocate-aligned-memory-only-using-the-standard-library
+	u32 alignmentOffset = 0;
 	if (alignment != 0) { 
+#if ATLAS_64
 		u64 mem_addr = (u64)((void*)mem) + sizeof(Allocation);
+#elif ATLAS_32
+		u32 mem_addr = (u32)((void*)mem) + sizeof(Allocation);
+#else
+		#error Unknown platform
+#endif
 		if (mem_addr % alignment != 0) {
 			mem_addr = (mem_addr + (alignment - 1)) / alignment * alignment;
 			mem = (u8*)(mem_addr - sizeof(Allocation));
@@ -803,15 +798,6 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 
 	Allocation* allocation = (Allocation*)mem;
 	mem += sizeof(Allocation);
-
-#if _DEBUG
-	u64 _address = (u64)((void*)mem);
-	u64 _address_m3 = 0;
-	if (alignment != 0) {
-		_address_m3 = _address % alignment;
-		assert(_address % alignment == 0, "Memory::Allocate is not properly aligned");
-	}
-#endif
 
 	allocation->alignment = alignment;
 	allocation->size = bytes;
@@ -846,7 +832,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, const char* location, Allocator
 	return mem;
 }
 
-void Memory::Release(void* memory, const char* location, Allocator* allocator) {
+void Memory::Release(void* memory, Allocator* allocator, const char* location) {
 	assert(memory != 0, "Memory:Free can't free a null pointer");
 
 	if (allocator == 0) {
@@ -906,11 +892,8 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 
 	// Clear the bits that where tracking this memory
 	u8* firstMemory = (u8*)allocator;
-#if ATLAS_64
-	u64 address = (u64)(mem - firstMemory);
-#elif ATLAS_32
-	u32 address = (u32)(mem - firstMemory);
-#endif
+	u32 address = (u32)((u8*)mem - (u8*)firstMemory);
+
 	u32 firstPage = address / allocator->pageSize;
 	u32 numPages = paddedAllocationSize / allocator->pageSize + (paddedAllocationSize % allocator->pageSize ? 1 : 0);
 	ClearRange(allocator, firstPage, numPages);
@@ -926,187 +909,94 @@ void Memory::Release(void* memory, const char* location, Allocator* allocator) {
 	}
 }
 
-void* Memory::AllocateContigous(u32 num_elems, u32 elem_size, u32 alignment, const char* location, Allocator* allocator) {
-	if (allocator == 0) {
-		allocator = GlobalAllocator;
-	}
-	void* mem = Allocate(num_elems * elem_size, alignment, location, allocator);
-	if (mem == 0) {
-		assert(false, "");
-		return 0;
-	}
-	Set(mem, num_elems * elem_size, 0, location);
-
-	return mem;
-}
-
-void* Memory::ReAllocate(void* mem, u32 newSize, u32 newAlignment, const char* location, Allocator* allocator) {
-	if (allocator == 0) {
-		allocator = GlobalAllocator;
-	}
-
-	if (newSize == 0 && mem != 0) {
-		Release(mem, location, allocator);
-		return 0;
-	}
-
-	void* newMem = Allocate(newSize, newAlignment, location, allocator);
-	u32 oldMemSize = 0;
-	{
-		u8* memory = (u8*)mem;
-		Allocation* header = (Allocation*)(memory - sizeof(Allocation));
-		oldMemSize = header->size - sizeof(Allocation);
-		u32 alignment = header->alignment;
-
-		u32 allocationHeaderPadding = 0;
-		if (alignment != 0) {  // Add padding to the header to compensate for alignment
-			allocationHeaderPadding = alignment - 1; // Somewhere in this range, we will be aligned
-		}
-
-		oldMemSize -= allocationHeaderPadding;
-	}
-
-	if (mem != 0 && newMem != 0) {
-		u32 copySize = newSize;
-		if (newSize > oldMemSize) {
-			copySize = oldMemSize;
-		}
-
-		Copy(newMem, mem, copySize, location);
-		Release(mem, location, allocator);
-	}
-
-	return newMem;
-}
-
 #if MEM_IMPLEMENT_MALLOC
-#if MEM_DEFINE_MALLOC
-#undef malloc
-#undef free
-#undef memset
-#undef memcpy
-#undef calloc
-#undef realloc
-#endif
 
-extern "C" void* __cdecl malloc(decltype(sizeof(0)) bytes) {
-	return Memory::Allocate(bytes, 0, "internal - malloc", Memory::GlobalAllocator);
+extern "C" void* __cdecl malloc(Memory::ptr_type bytes) {
+	return Memory::Allocate((u32)bytes, 0, Memory::GlobalAllocator, "internal - malloc");
 }
 
 extern "C" void __cdecl free(void* data) {
-	return Memory::Release(data, "internal - free", Memory::GlobalAllocator);
+	return Memory::Release(data, Memory::GlobalAllocator, "internal - free");
 }
 
-extern "C" void* __cdecl memset(void* mem, i32 value, decltype(sizeof(0)) size) {
-	Memory::Set(mem, value, size, "internal - memset");
+extern "C" void* __cdecl memset(void* mem, i32 value, Memory::ptr_type size) {
+	Memory::Set(mem, value, (u32)size, "internal - memset");
 	return mem;
 }
 
-extern "C" void* __cdecl memcpy(void* dest, const void* src, decltype(sizeof(0)) size) {
-	Memory::Copy(dest, src, size, "internal - memcpy");
+extern "C" void* __cdecl memcpy(void* dest, const void* src, Memory::ptr_type size) {
+	Memory::Copy(dest, src, (u32)size, "internal - memcpy");
 	return dest;
 }
-
-extern "C" void* __cdecl calloc(decltype(sizeof(0)) count, decltype(sizeof(0)) size) {
-	return Memory::AllocateContigous(count, size, 0, "internal - calloc", Memory::GlobalAllocator);
-}
-
-extern "C" void* __cdecl realloc(void* mem, decltype(sizeof(0)) size) {
-	return Memory::ReAllocate(mem, size, 0, "internal - realloc", Memory::GlobalAllocator);
-}
-
-#if MEM_DEFINE_MALLOC
-#define malloc(bytes) Memory::Allocate(bytes, 0, __LOCATION__, Memory::GlobalAllocator)
-#define free(data) Memory::Release(data, __LOCATION__, Memory::GlobalAllocator)
-#define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
-#define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
-#define calloc(numelem, elemsize) Memory::AllocateContigous(numelem, elemsize, 0, __LOCATION__, Memory::GlobalAllocator)
-#define realloc(mem, size) Memory::ReAllocate(mem, size, 0, __LOCATION__, Memory::GlobalAllocator)
-#endif
 #endif
 
 #if MEM_IMPLEMENT_NEW
-#if MEM_DEFINE_NEW
-#undef new
-#endif
-
-void* __cdecl operator new (decltype(sizeof(0)) size) {
+void* __cdecl operator new (Memory::ptr_type size) {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate(size, 0, "internal - ::new(size_t)", Memory::GlobalAllocator);
+	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new(size_t)");
 }
 
-void* __cdecl operator new (decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept {
+void* __cdecl operator new (Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate(size, 0, "internal - ::new(size_t, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new(size_t, nothrow_t&)");
 }
 
-void* __cdecl  operator new (decltype(sizeof(0)) size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept {
+void* __cdecl  operator new (Memory::ptr_type size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate(size, alignment, location, allocator);
+	return Memory::Allocate((u32)size, alignment, allocator, location);
 }
 
 void __cdecl operator delete (void* ptr) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete(void*)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*)");
 }
 
 void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete(void*, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, nothrow_t&)");
 }
 
-void __cdecl operator delete(void* memory, const char* location, Memory::Allocator* allocator) {
+void __cdecl operator delete (void* ptr, Memory::ptr_type size) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(memory, location, allocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, size_t)");
 }
 
-void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size) noexcept {
+void __cdecl operator delete (void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete(void*, size_t)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, size_t, nothrow_t&)");
 }
 
-void __cdecl operator delete (void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept {
+void* __cdecl operator new[](Memory::ptr_type size) {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete(void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new[](size_t)");
 }
 
-void* __cdecl operator new[](decltype(sizeof(0)) size) {
+void* __cdecl operator new[](Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate(size, 0, "internal - ::new[](size_t)", Memory::GlobalAllocator);
-}
-
-void* __cdecl operator new[](decltype(sizeof(0)) size, const std::nothrow_t& nothrow_value) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate(size, 0, "internal - ::new[](size_t, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new[](size_t, nothrow_t&)");
 }
 
 void __cdecl operator delete[](void* ptr) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete[](void*)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*)");
 }
 
 void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete[](void*, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, nothrow_t&)");
 }
 
-void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size) noexcept {
+void __cdecl operator delete[](void* ptr, Memory::ptr_type size) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete[](void*, size_t)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, size_t)");
 }
 
-void __cdecl operator delete[](void* ptr, decltype(sizeof(0)) size, const std::nothrow_t& nothrow_constant) noexcept {
+void __cdecl operator delete[](void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept {
 	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, "internal - ::delete[](void*, size_t, nothrow_t&)", Memory::GlobalAllocator);
+	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, size_t, nothrow_t&)");
 }
-
-#if MEM_DEFINE_NEW
-#define new new(0, __LOCATION__, Memory::GlobalAllocator
-#endif
 #endif
 
-// Scott Schurr const string
-// https://gist.github.com/creative-quant/6aa863e1cb415cbb9056f3d86f23b2c4
 namespace Memory {
 	namespace Debug {
 		class str_const { // constexpr string
@@ -1125,8 +1015,8 @@ namespace Memory {
 			constexpr char operator[](ptr_type n) const noexcept { // []
 				return n < sz_ ? p_[n] : (*(char*)((void*)0) = '\0');
 			}
-			constexpr ptr_type size() const noexcept { // string length
-				return sz_;
+			constexpr u32 size() const noexcept { // string length
+				return (u32)sz_;
 			} // size()
 			const char* begin() const noexcept { // start iterator
 				return p_;
@@ -1141,8 +1031,8 @@ namespace Memory {
 			} // <<
 		};
 
-		u32 u64toa(u8* dest, u32 destSize, u64 num) { // Returns length of string
-			Set(dest, 0, destSize, "Memory::Debug::u64toa");
+		u32 u32toa(u8* dest, u32 destSize, u32 num) { // Returns length of string
+			Set(dest, 0, destSize, "Memory::Debug::u32toa");
 
 			u32 count = 0;
 			u32 tmp = num;
@@ -1158,7 +1048,7 @@ namespace Memory {
 
 			u8* last = dest + count - 1;
 			while (num != 0) {
-				u64 digit = num % 10;
+				u32 digit = num % 10;
 				num = num / 10;
 
 				*last-- = '0' + digit;
@@ -1197,7 +1087,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		u32 numPages = allocator->size / allocator->pageSize;
 		assert(allocator->size % allocator->pageSize == 0, l);
 
-		u32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, numPages);
+		u32 i_len = u32toa(i_to_a_buff, i_to_a_buff_size, numPages);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1207,7 +1097,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out1.size();
 		memSize -= out1.size();
 
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, allocator->pageSize);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, allocator->pageSize);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1218,7 +1108,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		memSize -= out11.size();
 
 		u32 kib = allocator->size / 1024;
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, kib);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, kib);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1229,7 +1119,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		memSize -= out2.size();
 
 		u32 mib = kib / 1024;
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, mib);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, mib);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1276,7 +1166,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		assert(usedPages >= overheadPages, l);
 		usedPages -= overheadPages;
 
-		u32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, freePages);
+		u32 i_len = u32toa(i_to_a_buff, i_to_a_buff_size, freePages);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1286,7 +1176,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out1.size();
 		memSize -= out1.size();
 
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, usedPages);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, usedPages);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1296,7 +1186,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out2.size();
 		memSize -= out2.size();
 
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, overheadPages);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, overheadPages);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1306,7 +1196,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out3.size();
 		memSize -= out3.size();
 
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, allocator->requested);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, allocator->requested);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1316,7 +1206,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 		mem += out4.size();
 		memSize -= out4.size();
 
-		i_len = u64toa(i_to_a_buff, i_to_a_buff_size, usedPages * allocator->pageSize);
+		i_len = u32toa(i_to_a_buff, i_to_a_buff_size, usedPages * allocator->pageSize);
 		Copy(mem, i_to_a_buff, i_len, l);
 		mem += i_len;
 		memSize -= i_len;
@@ -1353,7 +1243,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			memSize -= out5.size();
 
 			u32 allocationOffset = (u32)((u8*)iter - (u8*)allocator);
-			i32 i_len = u64toa(i_to_a_buff, i_to_a_buff_size, allocationOffset);
+			i32 i_len = u32toa(i_to_a_buff, i_to_a_buff_size, allocationOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1363,7 +1253,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out2.size();
 			memSize -= out2.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->size);
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, iter->size);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1379,8 +1269,8 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 				allocationHeaderPadding = alignment - 1; // Somewhere in this range, we will be aligned
 			}
 
-			u64 realSize = iter->size + sizeof(Allocation) + allocationHeaderPadding;
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, realSize);
+			u32 realSize = iter->size + (u32)(sizeof(Allocation)) + allocationHeaderPadding;
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, realSize);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1390,7 +1280,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out6.size();
 			memSize -= out6.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->alignment);
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, iter->alignment);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1400,7 +1290,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += outfp.size();
 			memSize -= outfp.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, (allocationOffset) / allocator->pageSize);
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, (allocationOffset) / allocator->pageSize);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1410,7 +1300,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out0.size();
 			memSize -= out0.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->prevOffset);
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, iter->prevOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1420,7 +1310,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			mem += out1.size();
 			memSize -= out1.size();
 
-			i_len = u64toa(i_to_a_buff, i_to_a_buff_size, iter->nextOffset);
+			i_len = u32toa(i_to_a_buff, i_to_a_buff_size, iter->nextOffset);
 			Copy(mem, i_to_a_buff, i_len, l);
 			mem += i_len;
 			memSize -= i_len;
@@ -1557,15 +1447,15 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 
 void Memory::Debug::PageContent(Allocator* allocator, u32 page, WriteCallback callback, void* userdata) {
 	u8* mem = (u8*)allocator + page * allocator->pageSize;
-	u32 chunk = allocator->pageSize / 4; // 1 KiB at the default size.
-
+	u32 chunk = allocator->pageSize / 4; // Does not need to be a multiple of 4
+	
 	callback(mem, chunk, userdata);
 	mem += chunk;
 	callback(mem, chunk, userdata);
 	mem += chunk;
 	callback(mem, chunk, userdata);
 	mem += chunk;
-	callback(mem, chunk, userdata);
+	callback(mem, allocator->pageSize - (allocator->pageSize / 4) * 3, userdata);
 }
 
 u8* Memory::Debug::DevPage(Allocator* allocator) {
@@ -1586,7 +1476,21 @@ u8* Memory::Debug::DevPage(Allocator* allocator) {
 	metaDataSizeBytes += allocator->pageSize;
 	numberOfMasksUsed += 1;
 
-
 	u8* debugPage = (u8*)allocator + metaDataSizeBytes - allocator->pageSize; // Debug page is always one page before allocatable
 	return debugPage;
 }
+
+
+#if MEM_DEFINE_NEW
+	#define new new(0, __LOCATION__, Memory::GlobalAllocator)
+#endif
+
+#if MEM_DEFINE_MALLOC
+	#define malloc(bytes) Memory::Allocate(bytes, 0, Memory::GlobalAllocator, __LOCATION__)
+	#define free(data) Memory::Release(data, Memory::GlobalAllocator, __LOCATION__)
+	#define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
+	#define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
+#endif
+
+#pragma warning(default:6011)
+#pragma warning(default:28182)

@@ -3,11 +3,8 @@
 
 #include "mem.h"
 
-#ifndef _DEBUG
-#define assert(condition) ;
-#define Assert(condition) ;
-#define NotImplemented() ;
-#else 
+#pragma warning(disable:6011)
+
 void runtime_assert(bool condition, const char* file, int line) {
 	char* data = (char*)((void*)0);
 	if (condition == false) {
@@ -15,13 +12,7 @@ void runtime_assert(bool condition, const char* file, int line) {
 	}
 }
 
-void NotImplemented() {
-	char* data = (char*)((void*)0);
-	*data = '\0';
-}
-#define assert(condition) runtime_assert(condition, __FILE__, __LINE__)
-#define Assert(condition) runtime_assert(condition, __FILE__, __LINE__)
-#endif
+#define WinAssert(condition) runtime_assert(condition, __FILE__, __LINE__)
 
 #define IDT_TIMER1 1001
 #define IDC_LIST 1
@@ -48,7 +39,17 @@ EXTERN_C IMAGE_DOS_HEADER __ImageBase;
 
 extern "C" int _fltused = 0;
 
-// https://stackoverflow.com/questions/16031470/header-with-memory-size-definitions
+i32 scrollY;
+u32 oldNumRows; 
+HWND gMemoryWindow;
+struct FrameBuffer* gFrameBuffer;
+struct Win32Color* bgColor;
+struct Win32Color* freeMemoryColor;
+struct Win32Color* usedMemoryColor;
+struct Win32Color* trackMemoryColor;
+struct Win32Color* boxColor;
+struct Win32Color* textColor;
+
 #define KB(x)   ((size_t) (x) << 10)
 #define MB(x)   ((size_t) (x) << 20)
 #define GB(x)   ((size_t) (x) << 30)
@@ -61,18 +62,18 @@ struct MemoryDebugInfo {
 	u32 NumUsedPages;
 	u32 NumOverheadPages;
 
-	
-
 	MemoryDebugInfo(Memory::Allocator* allocator) {
 #if ATLAS_64
 		u64 allocatorHeaderSize = sizeof(Memory::Allocator);
 #elif ATLAS_32
 		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
+#else
+	#error Unknown Platform
 #endif
 		PageMask = ((u8*)allocator) + allocatorHeaderSize;
 
 		NumberOfPages = allocator->size / allocator->pageSize; // 1 page = 4096 bytes, how many are needed
-		assert(allocator->size % allocator->pageSize == 0, "Allocator size should line up with page size");
+		WinAssert(allocator->size % allocator->pageSize == 0); // Allocator size should line up with page size
 		
 		u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
 		u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
@@ -87,7 +88,7 @@ struct MemoryDebugInfo {
 		numberOfMasksUsed += 1;
 
 		u32 allocatorOverheadBytes = metaDataSizeBytes;
-		assert(allocatorOverheadBytes % allocator->pageSize == 0, "Offset to allocatable should always line up with page size");
+		WinAssert(allocatorOverheadBytes % allocator->pageSize == 0); // Offset to allocatable should always line up with page size
 
 		NumFreePages = 0;
 		NumUsedPages = 0;
@@ -95,7 +96,7 @@ struct MemoryDebugInfo {
 		//NumOverheadPages += 1; // Debug tracker page
 
 		u32* mask = (u32*)PageMask;
-		for (int page = NumOverheadPages; page < NumberOfPages; ++page) { // Don't start at page 0?
+		for (u32 page = NumOverheadPages; page < NumberOfPages; ++page) { // Don't start at page 0?
 			const u32 block = page / Memory::TrackingUnitSize;
 			const int bit = page % Memory::TrackingUnitSize;
 
@@ -109,17 +110,11 @@ struct MemoryDebugInfo {
 		}
 
 		// These are super useless right now
-		assert(NumFreePages + NumUsedPages + NumOverheadPages == NumberOfPages, "Page number does not add up");
-		assert(NumUsedPages + NumOverheadPages == allocator->numPagesUsed, "Added up wrong number of used pages?!!");
+		WinAssert(NumFreePages + NumUsedPages + NumOverheadPages == NumberOfPages);// Page number does not add up
+		WinAssert(NumUsedPages + NumOverheadPages == allocator->numPagesUsed);// Added up wrong number of used pages?!!
 	}
-
-	bool IsPageSet(u32 page) {
-		NotImplemented();
-		return false;
-	}
-
 private:
-	static inline u32 AllocatorPageMaskSize(Memory::Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
+	inline u32 AllocatorPageMaskSize(Memory::Allocator* allocator) { // This is the number of u8's that make up the AllocatorPageMask array
 		u32 allocatorNumberOfPages = allocator->size / allocator->pageSize; // 1 page = 4096 bytes, how many are needed
 		//assert(allocator->size % PageSize == 0, "Allocator size should line up with page size");
 		// allocatorNumberOfPages is the number of bits that are required to track memory
@@ -131,7 +126,7 @@ private:
 		return allocatorPageArraySize * (Memory::TrackingUnitSize / 8); // In bytes, not bits
 	}
 
-	static inline u32 AllocatorPaddedSize() {
+	inline u32 AllocatorPaddedSize() {
 		u32 allocatorHeaderSize = sizeof(Memory::Allocator);
 		return allocatorHeaderSize;
 	}
@@ -145,22 +140,38 @@ struct Win32Color {
 	unsigned char b;
 	unsigned char a;
 
+	Win32Color() {
+		color = RGB(0, 0, 0);
+		brush = 0;
+		r = 0;
+		g = 0;
+		b = 0;
+		a = 255;
+		CreateBrushObject();
+	}
+
+	~Win32Color() {
+		DestroyBrushObject();
+	}
+
 	void Init(unsigned char _r, unsigned char _g, unsigned char _b) {
 		color = RGB(_r, _g, _b);
-		brush = 0;// CreateSolidBrush(color);
 		r = _r;
 		g = _g;
 		b = _b;
 		a = 255;
+		DestroyBrushObject();
+		brush = CreateSolidBrush(color);
 	}
 	
+protected:
 	void CreateBrushObject() {
-		Assert(brush == 0);
+		WinAssert(brush == 0);
 		brush = CreateSolidBrush(color);
 	}
 
 	void DestroyBrushObject() {
-		Assert(brush != 0);
+		WinAssert(brush != 0);
 		DeleteObject(brush);
 		brush = 0;
 	}
@@ -193,10 +204,11 @@ struct FrameBuffer { // For double buffered window
 		Memory = 0;
 		Width = 0;
 		Height = 0;
+		Memory::Set(&RenderBufferInfo, 0, sizeof(BITMAPINFO), 0);
 	}
 
 	void Initialize() {
-		assert(Memory == 0);
+		WinAssert(Memory == 0);
 
 		Width = GetSystemMetrics(SM_CXSCREEN);
 		Height = GetSystemMetrics(SM_CYSCREEN);
@@ -214,17 +226,12 @@ struct FrameBuffer { // For double buffered window
 	}
 
 	void Destroy() {
-		assert(Memory != 0);
+		WinAssert(Memory != 0);
 		VirtualFree(Memory, 0, MEM_RELEASE);
 		Memory = 0;
 	}
 };
 
-static HWND gMemoryWindow;
-static FrameBuffer gFrameBuffer;
-static i32 scrollY = 0;
-
-// https://yal.cc/cpp-a-very-tiny-dll/
 void log(const char* pszFormat, ...) {
 	char buf[1024];
 	va_list argList;
@@ -268,7 +275,6 @@ struct Win32WindowLayout {
 		COPY_RECT(bottomCenterArea, _bottomCenter);
 	}
 };
-
 
 void SetWindowLayout(const Win32WindowLayout& layout, HWND chart, HWND* labels, HWND list, HWND* buttons,HWND upDown, HWND upDownEdit, HWND combo) {
 	MemoryDebugInfo memInfo(Memory::GlobalAllocator);
@@ -390,7 +396,9 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 			print_to++;
 		}
 #if MEM_TRACK_LOCATION
-		MultiByteToWideChar(0, 0, iter->location, len, print_to, len);
+		if (iter->location != 0) {
+			MultiByteToWideChar(0, 0, iter->location, (int)len, print_to, (int)len);
+		}
 #endif
 
 		SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)displaybuffer);
@@ -399,12 +407,12 @@ void ResetListBoxContent(Memory::Allocator* allocator, HWND list) {
 	SendMessage(list, LB_SETCURSEL, selection, 0);
 }
 
-static void FillBox(RECT& rect, Win32Color& c) {
+void FillBox(RECT& rect, Win32Color& c) {
 	const unsigned char r = c.r;
 	const unsigned char g = c.g;
 	const unsigned char b = c.b;
 
-	const unsigned int BufferSize = gFrameBuffer.Width * gFrameBuffer.Height * 4;
+	const unsigned int BufferSize = gFrameBuffer->Width * gFrameBuffer->Height * 4;
 
 	i32 top = rect.top < 0 ? 0 : rect.top;
 	i32 bottom = rect.bottom < 0 ? 0 : rect.bottom;
@@ -413,14 +421,14 @@ static void FillBox(RECT& rect, Win32Color& c) {
 
 	for (int row = top; row < bottom; ++row) {
 		for (int col = left; col < right; ++col) {
-			unsigned int pixel = (row * gFrameBuffer.Width + col) * 4;
+			unsigned int pixel = (row * gFrameBuffer->Width + col) * 4;
 			if (pixel >= BufferSize) {
 				break;
 			}
-			gFrameBuffer.Memory[pixel + 0] = b;
-			gFrameBuffer.Memory[pixel + 1] = g;
-			gFrameBuffer.Memory[pixel + 2] = r;
-			gFrameBuffer.Memory[pixel + 3] = 255;
+			gFrameBuffer->Memory[pixel + 0] = b;
+			gFrameBuffer->Memory[pixel + 1] = g;
+			gFrameBuffer->Memory[pixel + 2] = r;
+			gFrameBuffer->Memory[pixel + 3] = 255;
 		}
 	}
 }
@@ -491,22 +499,22 @@ void RedrawMemoryChart(HWND hwnd, Win32Color& bgColor, Win32Color& trackMemoryCo
 }
 
 Win32WindowLayout GetWindowLayout(HWND hwnd) {
-	const u32 sideMargin = 50;
-	const u32 topMargin = 25;
+	const i32 sideMargin = 50;
+	const i32 topMargin = 25;
 
-	const u32 middleSeperator = 40;
-	const u32 minChartWidth = 150;
-	const u32 minChartHeight = 150;
+	const i32 middleSeperator = 40;
+	const i32 minChartWidth = 150;
+	const i32 minChartHeight = 150;
 	
-	const u32 bottomAreaHeight = 300;
-	const u32 bottomSeperator = 10;
+	const i32 bottomAreaHeight = 300;
+	const i32 bottomSeperator = 10;
 	
-	const u32 bottomLeftWidth = 365;
+	const i32 bottomLeftWidth = 365;
 
 	RECT clientRect = {0};
 	GetClientRect(hwnd, &clientRect);
-	const u32 clientHeight = clientRect.bottom - clientRect.top;
-	const u32 clientWidth = clientRect.right - clientRect.left;
+	const i32 clientHeight = clientRect.bottom - clientRect.top;
+	const i32 clientWidth = clientRect.right - clientRect.left;
 
 	// Layout info
 	RECT topArea;
@@ -541,7 +549,7 @@ Win32WindowLayout GetWindowLayout(HWND hwnd) {
 	bottomArea.bottom = bottomArea.top + bottomAreaHeight;
 
 	// Sub-divide the bottom area
-	assert(minChartWidth / 3 > bottomSeperator /2);
+	WinAssert(minChartWidth / 3 > bottomSeperator /2);
 	const u32 bottomSectorMinWidth = minChartWidth / 3 - bottomSeperator /2;
 	u32 bottomSectorWidth = bottomSectorMinWidth;
 	if (chartWidth / 3 > bottomSeperator /2 && (chartWidth / 3 - bottomSeperator /2) > bottomSectorMinWidth) {
@@ -564,30 +572,13 @@ Win32WindowLayout GetWindowLayout(HWND hwnd) {
 
 LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	// Great orange: (255, 125, 64);
-	static Win32Color bgColor = { 0 };
-	static Win32Color freeMemoryColor = { 0 };
-	static Win32Color usedMemoryColor = { 0 };
-	static Win32Color trackMemoryColor = { 0 };
 
 	switch (iMsg) {
 	case WM_CREATE:
-		freeMemoryColor.Init(110, 110, 220);
-		usedMemoryColor.Init(110, 240, 110);
-		trackMemoryColor.Init(255, 110, 110);
-		bgColor.Init(30, 30, 30);
-
-		bgColor.CreateBrushObject();
-		freeMemoryColor.CreateBrushObject();
-		usedMemoryColor.CreateBrushObject();
-		trackMemoryColor.CreateBrushObject();
 		scrollY = 0;
-		SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor.brush);
+		SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor->brush);
 		break;
 	case WM_DESTROY:
-		bgColor.DestroyBrushObject();
-		freeMemoryColor.DestroyBrushObject();
-		usedMemoryColor.DestroyBrushObject();
-		trackMemoryColor.DestroyBrushObject();
 		
 		break;
 	case WM_VSCROLL:
@@ -607,7 +598,6 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			if (pos == -1) {
 				break;
 			}
-			WCHAR buf[20];
 			SCROLLINFO si = { 0 };
 			si.cbSize = sizeof(SCROLLINFO);
 			si.fMask = SIF_POS;
@@ -625,13 +615,12 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			ScrollWindow(hwnd, 0, -pt.y, NULL, NULL);
 			scrollY = pos;
 
-			RedrawMemoryChart(hwnd, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
+			RedrawMemoryChart(hwnd, *bgColor, *trackMemoryColor, *usedMemoryColor, *freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 		}
 		break;
 	case WM_SIZE:
 	{
-		static u32 oldNumRows = 0;
 		RECT clientRect;
 
 		GetClientRect(hwnd, &clientRect);
@@ -675,20 +664,20 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			int clientWidth = clientRect.right - clientRect.left;
 			int clientHeight = clientRect.bottom - clientRect.top;
 
-			assert(clientWidth < gFrameBuffer.Width);
-			assert(clientHeight < gFrameBuffer.Height);
+			WinAssert(clientWidth < (int)gFrameBuffer->Width);
+			WinAssert(clientHeight < (int)gFrameBuffer->Height);
 
-			if (clientWidth > gFrameBuffer.Width) {
-				clientWidth = gFrameBuffer.Width;
+			if (clientWidth > (int)gFrameBuffer->Width) {
+				clientWidth = (int)gFrameBuffer->Width;
 			}
-			if (clientHeight > gFrameBuffer.Height) {
-				clientHeight = gFrameBuffer.Height;
+			if (clientHeight > (int)gFrameBuffer->Height) {
+				clientHeight = (int)gFrameBuffer->Height;
 			}
 
 			StretchDIBits(hdc,
 				0, 0, clientWidth, clientHeight,
 				0, 0, clientWidth, clientHeight,
-				gFrameBuffer.Memory, &gFrameBuffer.RenderBufferInfo,
+				gFrameBuffer->Memory, &gFrameBuffer->RenderBufferInfo,
 				DIB_RGB_COLORS, SRCCOPY);
 
 #if 0
@@ -703,7 +692,6 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 			const u32 numColumns = clientWidth / (pagePadding + pageWidth + pagePadding);
 			const u32 numRows = clientHeight / (pagePadding + pageHeight + pagePadding) + (clientHeight % (pagePadding + pageHeight + pagePadding) ? 1 : 0);
 
-			static u32 oldNumRows = 0;
 			if (oldNumRows != numRows) {
 				SCROLLINFO si = { 0 };
 				si.cbSize = sizeof(SCROLLINFO);
@@ -772,10 +760,9 @@ LRESULT CALLBACK MemoryChartProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lPa
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	if (iMsg != WM_GETMINMAXINFO && iMsg != WM_NCCREATE && iMsg != WM_NCCALCSIZE) {
-		Assert(gMemoryWindow != 0);
+		WinAssert(gMemoryWindow != 0);
 	}
 
-	static Win32Color bgColor = { 0 };
 	static HWND hwndChart = 0;
 	static HWND hwndLabels[9] = { 0 };
 	static HWND hwndList = 0;
@@ -784,44 +771,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 	static HWND hwndUpDownEdit = { 0 };
 	static HWND hwndCombo = { 0 };
 
-	static Win32Color boxColor = { 0 };
-	static Win32Color textColor = { 0 };
-	static Win32Color freeMemoryColor = { 0 };
-	static Win32Color usedMemoryColor = { 0 };
-	static Win32Color trackMemoryColor = { 0 };
-
 	switch (iMsg) {
 	case WM_NCCREATE:
-		bgColor.Init(30, 30, 30);
-		boxColor.Init(50, 50, 50);
-		textColor.Init(220, 220, 220);
-		freeMemoryColor.Init(110, 110, 220);
-		usedMemoryColor.Init(110, 240, 110);
-		trackMemoryColor.Init(255, 110, 110);
+		bgColor->Init(30, 30, 30);
+		boxColor->Init(50, 50, 50);
+		textColor->Init(220, 220, 220);
+		freeMemoryColor->Init(110, 110, 220);
+		usedMemoryColor->Init(110, 240, 110);
+		trackMemoryColor->Init(255, 110, 110);
 
-		Assert(gMemoryWindow == 0);
+		WinAssert(gMemoryWindow == 0);
 		gMemoryWindow = hwnd;
 		break;
 	case WM_NCDESTROY:
-		Assert(gMemoryWindow != 0);
-		Assert(gMemoryWindow == hwnd);
+		WinAssert(gMemoryWindow != 0);
+		WinAssert(gMemoryWindow == hwnd);
 		gMemoryWindow = 0;
 		break;
 	case WM_CREATE:
-		Assert(gMemoryWindow == hwnd);
-		gFrameBuffer.Initialize();
+		WinAssert(gMemoryWindow == hwnd);
+		gFrameBuffer->Initialize();
 		{ // Set up render styles
-			bgColor.CreateBrushObject();
-			boxColor.CreateBrushObject();
-			textColor.CreateBrushObject();
-			freeMemoryColor.CreateBrushObject();
-			usedMemoryColor.CreateBrushObject();
-			trackMemoryColor.CreateBrushObject();
-
-			SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor.brush);
+			SetClassLongPtr(hwnd, GCLP_HBRBACKGROUND, (LONG_PTR)bgColor->brush);
 		}
 		{ // Create Memory chart window
-			// https://stackoverflow.com/questions/32094254/how-to-control-scrollbar-in-vc-win32-api
 			WNDCLASSEX wc;
 			wc.cbSize = sizeof(WNDCLASSEX);
 			wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -868,16 +841,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 
 			hwndCombo = CreateWindow(WC_COMBOBOX, TEXT(""), CBS_DROPDOWN | CBS_HASSTRINGS | WS_CHILD | WS_OVERLAPPED | WS_VISIBLE, 0, 0, 50, 50, hwnd, NULL, HINST_THISCOMPONENT, NULL);
 			static const wchar_t* items[] = { L"bytes", L"KiB", L"MiB" };
-			int debug_0 = SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[0]);
-			int debug_1 = SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[1]);
-			int debug_2 = SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[2]);
+			int debug_0 = (int)SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[0]);
+			int debug_1 = (int)SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[1]);
+			int debug_2 = (int)SendMessage(hwndCombo, (UINT)CB_ADDSTRING, 0, (LPARAM)items[2]);
 			SendMessage(hwndCombo, CB_SETCURSEL, (WPARAM)1, (LPARAM)0);
 		}
 		{ // Layout the window elements that where just created to the size of the window
 			Win32WindowLayout layout = GetWindowLayout(hwnd);
 			SetWindowLayout(layout, hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
 			ResetListBoxContent(Memory::GlobalAllocator, hwndList);
-			RedrawMemoryChart(hwndChart, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
+			RedrawMemoryChart(hwndChart, *bgColor, *trackMemoryColor, *usedMemoryColor, *freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 		}
 		break;
@@ -886,20 +859,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		}
 		break;
 	case WM_CLOSE:
-		Assert(gMemoryWindow == hwnd);
-		bgColor.DestroyBrushObject();
-		boxColor.DestroyBrushObject();
-		textColor.DestroyBrushObject();
-		freeMemoryColor.DestroyBrushObject();
-		usedMemoryColor.DestroyBrushObject();
-		trackMemoryColor.DestroyBrushObject();
-		gFrameBuffer.Destroy();
+		WinAssert(gMemoryWindow == hwnd);
+		gFrameBuffer->Destroy();
 		break;
 	case WM_COMMAND:
 	{
 		bool update = false;
 		if (LOWORD(wParam) == ID_ALLOCATE_MEM) {
-			int howMany = SendMessage(hwndUpDown, UDM_GETPOS, 0, 0);
+			int howMany = (int)SendMessage(hwndUpDown, UDM_GETPOS, 0, 0);
 			LRESULT units = SendMessage(hwndCombo, CB_GETCURSEL, 0, 0);
 			if (units == 0) {
 				units = 1;
@@ -911,18 +878,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				units = 1024 * 1024;
 			}
 
-			malloc(howMany * units);
+			malloc(howMany * (u32)units);
 
 			update = true;
 		}
 		if (LOWORD(wParam) == ID_FREE_MEM) {
-			int selection = SendMessage(hwndList, LB_GETCURSEL, 0, 0);
+			int selection = (int)SendMessage(hwndList, LB_GETCURSEL, 0, 0);
 			if (selection >= 0) {
 				int counter = 0;
 				Memory::Allocation* iter = Memory::GlobalAllocator->active;
-				assert(iter != 0);
+				WinAssert(iter != 0);
 				for (; iter != 0 && counter != selection; iter = (iter->nextOffset == 0)? 0 : (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset), counter++);
-				assert(counter == selection);
+				WinAssert(counter == selection);
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
 				free(mem);
 			}
@@ -958,7 +925,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				CREATE_NEW,             // Creates a new file, only if it doesn't already exist
 				FILE_ATTRIBUTE_NORMAL,  // Flags and attributes
 				NULL);                  // Template file handle
-			assert(hFile != INVALID_HANDLE_VALUE);
+			WinAssert(hFile != INVALID_HANDLE_VALUE);
 
 			Memory::Debug::MemInfo(Memory::GlobalAllocator, [](const u8* mem, u32 size, void* fileHandle) {
 				HANDLE file = *(HANDLE*)fileHandle;
@@ -975,7 +942,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		if (update) {
 			SetWindowLayout(GetWindowLayout(hwnd), hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
 			ResetListBoxContent(Memory::GlobalAllocator, hwndList);
-			RedrawMemoryChart(hwndChart, bgColor, trackMemoryColor, usedMemoryColor, freeMemoryColor);
+			RedrawMemoryChart(hwndChart, *bgColor, *trackMemoryColor, *usedMemoryColor, *freeMemoryColor);
 			InvalidateRect(hwnd, 0, false);
 			return 0;
 		}
@@ -988,16 +955,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 		for (u32 i = 0; i < 11; ++i) {
 			HDC hdcStatic = (HDC)wParam;
 			if (hwndLabels[i] == (HWND)lParam) {
-				SetTextColor(hdcStatic, textColor.color);
-				SetBkColor(hdcStatic, boxColor.color);
-				return (INT_PTR)boxColor.brush;
+				SetTextColor(hdcStatic, textColor->color);
+				SetBkColor(hdcStatic, boxColor->color);
+				return (INT_PTR)boxColor->brush;
 			}
 		}
 		if (hwndList == (HWND)lParam) {
 			HDC hdcStatic = (HDC)wParam;
-			SetTextColor(hdcStatic, textColor.color);
-			SetBkColor(hdcStatic, boxColor.color);
-			return (INT_PTR)boxColor.brush;
+			SetTextColor(hdcStatic, textColor->color);
+			SetBkColor(hdcStatic, boxColor->color);
+			return (INT_PTR)boxColor->brush;
 		}
 		break;
 	case WM_SIZE:
@@ -1008,8 +975,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 #if _DEBUG
 		RECT clientRect = { 0 };
 		GetClientRect(hwnd, &clientRect);
-		assert(clientRect.right - clientRect.left == width);
-		assert(clientRect.bottom - clientRect.top == height);
+		WinAssert(clientRect.right - clientRect.left == width);
+		WinAssert(clientRect.bottom - clientRect.top == height);
 #endif
 		Win32WindowLayout layout = GetWindowLayout(hwnd);
 		SetWindowLayout(layout, hwndChart, hwndLabels, hwndList, hwndButtons, hwndUpDown, hwndUpDownEdit, hwndCombo);
@@ -1068,14 +1035,17 @@ void CreateMemoryWindow() {
 		hInstance,  // Instance handle
 		NULL        // Additional application data
 	);
-	Assert(gMemoryWindow != 0);
-	Assert(gMemoryWindow == hwnd);
+	WinAssert(gMemoryWindow != 0);
+	WinAssert(gMemoryWindow == hwnd);
 
 	ShowWindow(gMemoryWindow, SW_SHOWDEFAULT);
 	UpdateWindow(gMemoryWindow);
 }
 
 extern "C" DWORD CALLBACK run() {
+	scrollY = 0;
+	oldNumRows = 0;
+	//_fltused = 0;
 	unsigned int size = MB(512);
 
 	LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -1083,39 +1053,24 @@ extern "C" DWORD CALLBACK run() {
 	void* m = memory;
 	u32 trimmed = Memory::AlignAndTrim(&m, &size, Memory::DefaultPageSize);
 	Memory::GlobalAllocator = Memory::Initialize(m, size, Memory::DefaultPageSize);
-	assert((u64)((void*)Memory::GlobalAllocator) % 8 == 0);
+#if ATLAS_64
+	WinAssert((u64)((void*)Memory::GlobalAllocator) % 8 == 0);
+#elif ATLAS_32
+	WinAssert((u32)((void*)Memory::GlobalAllocator) % 8 == 0);
+#else
+	#error Unknown platform
+#endif
 
-	int* test = new int;
-	int* test2 = new int[5];
-	int* test3 = (int*)malloc(12);
+	gFrameBuffer = new FrameBuffer();
+	bgColor = new Win32Color();
+	freeMemoryColor = new Win32Color();
+	usedMemoryColor = new Win32Color();
+	trackMemoryColor = new Win32Color();
+	boxColor = new Win32Color();
+	textColor = new Win32Color();
 
-	{
-		void* mem = Memory::Allocate(10, 3);
-		u64 addy = (u64)mem;
-		u32 mod3 = addy % 3;
-		assert(mod3 == 0);
-		Memory::Release(mem);
-	}
-
-	{
-		void* mem = Memory::Allocate(10, 0);
-		Memory::Release(mem);
-	}
-
-	for (int i = 1; i < 29; ++i) {
-		void* mem = Memory::Allocate(10, i);
-		u64 addy = (u64)mem;
-		u32 mod3 = addy % i;
-		assert(mod3 == 0);
-		Memory::Release(mem);
-	}
-
-	free(test3);
-	delete test;
-	delete[] test2;
-
-	Memory::GlobalAllocator->scanBit = 0;
-
+	int* x = new int;
+	delete x;
 
 	CreateMemoryWindow();
 
@@ -1130,6 +1085,14 @@ extern "C" DWORD CALLBACK run() {
 		}
 		Sleep(1);
 	} while (gMemoryWindow != 0);
+
+	delete gFrameBuffer;
+	delete bgColor;
+	delete freeMemoryColor;
+	delete usedMemoryColor;
+	delete trackMemoryColor;
+	delete boxColor;
+	delete textColor;
 
 	// Free up any dangling memory (maybe add to debug?)
 	Memory::Allocation* iter = Memory::GlobalAllocator->active;
