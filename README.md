@@ -7,7 +7,7 @@ A sub-allocator provided which breaks the page up into a fast free list for smal
 
 Implementations and ```#defines``` for ```malloc```, ```new```, ```new[]```, ```free```, ```delete```, and ```delete[]``` are optionally provided. An optional STL allocator is also optionally provided.
 
-All of the code is in [mem.h](mem.h) and [mem.cpp](mem.cpp). The WinMain.cpp file isn't production ready, it's a hacky font-end to the memory manager. The same data that it displays is available trough the ```Memory::Debug``` namespace.
+All of the code is in [mem.h](mem.h) and [mem.cpp](mem.cpp). The [Win32Sample/Win32.cpp](Win32Sample/Win32.cpp) file isn't production ready, it's a hacky font-end to the memory manager. The same data that it displays is available trough the ```Memory::Debug``` namespace.
 
 ![Win32 memory allocator](Win32Sample/Win32.png)
 
