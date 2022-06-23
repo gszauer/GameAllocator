@@ -372,6 +372,7 @@ namespace Memory {
 			assert(false, "");
 			return;
 		}
+		u32 oldSize = header->size;
 		header->size = 0;
 
 		// Now remove from the active list.
@@ -420,7 +421,7 @@ namespace Memory {
 		}
 
 		if (allocator->releaseCallback != 0) {
-			allocator->releaseCallback(allocator, header, header->size, blockSize, startPage, releasePage ? 1 : 0);
+			allocator->releaseCallback(allocator, header, oldSize, blockSize, startPage, releasePage ? 1 : 0);
 		}
 	}
 #endif
@@ -902,10 +903,11 @@ void Memory::Release(void* memory, Allocator* allocator, const char* location) {
 	RemoveFromList(allocator, &allocator->active, allocation);
 
 	// Set the size to 0, to indicate that this header has been free-d
+	u32 oldSize = allocation->size;
 	allocation->size = 0;
 
 	if (allocator->releaseCallback != 0) {
-		allocator->releaseCallback(allocator, allocation, allocation->size, paddedAllocationSize, firstPage, numPages);
+		allocator->releaseCallback(allocator, allocation, oldSize, paddedAllocationSize, firstPage, numPages);
 	}
 }
 
