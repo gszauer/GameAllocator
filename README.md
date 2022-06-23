@@ -1,6 +1,6 @@
 # Game Allocator
 
-Game Allocator is a generic memory manager intended for games, embedded devices, and web assembly. Given a large array of memory, the library provides functions to allocate and release that memory similar to malloc / free.
+[Game Allocator](https://gabormakesgames.com/blog_memory.html) is a generic memory manager intended for games, embedded devices, and web assembly. Given a large array of memory, the library provides functions to allocate and release that memory similar to malloc / free.
 
 The memory will be broken up into pages (4 KiB by default) and tracked at the page granularity. 
 A sub-allocator provided which breaks the page up into a fast free list for smaller allocation.
