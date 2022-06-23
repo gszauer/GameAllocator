@@ -151,13 +151,13 @@ Resources:
 #define MEM_DEBUG_ON_ALLOC 0 // Fills memory with Memory- on each allocation
 
 // If set to 1, "C" functions for malloc, free, etc are provided. 
-#define MEM_IMPLEMENT_MALLOC 0
+#define MEM_IMPLEMENT_MALLOC 1
 
 // If set to 1, #define will be declared for malloc
 #define MEM_DEFINE_MALLOC 0
 
 // If set to 1, C++ functions for new, delete, etc are provided. 
-#define MEM_IMPLEMENT_NEW 0
+#define MEM_IMPLEMENT_NEW 1
 
 // If set to 1, #define will be declared for new 
 #define MEM_DEFINE_NEW 0

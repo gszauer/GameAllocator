@@ -439,15 +439,14 @@ u32 Memory::AlignAndTrim(void** memory, u32* size, u32 alignment, u32 pageSize) 
 	u32 delta = 0;
 
 	// Align to 8 byte boundary. This is so the mask array lines up on a u64
+	u32 alignmentDelta = alignment - (u32)(ptr % alignment);
+	assert(*size >= alignmentDelta, "");
 	if (ptr % alignment != 0) {
 		u8* mem = (u8*)(*memory);
 
-		u32 diff = ptr % alignment;
-		assert(*size >= diff, "");
-
-		delta += diff;
-		mem += diff;
-		*size -= diff;
+		delta += alignmentDelta;
+		mem += alignmentDelta;
+		*size -= alignmentDelta;
 		*memory = mem;
 	}
 
@@ -551,30 +550,26 @@ void Memory::Shutdown(Allocator* allocator) {
 }
 
 void Memory::Copy(void* dest, const void* source, u32 size, const char* location) {
-#if 0
-	u8* dst = (u8*)dest;
-	const u8* src = (const u8*)source;
-	for (u32 i = 0; i < size; ++i) {
-		dst[i] = src[i];
-	}
+#if ATLAS_64
+	u64 dst_ptr = (u64)((const void*)(dest));
+	u64 src_ptr = (u64)((const void*)(source));
+	u64 alignment = sizeof(u64);
+#elif ATLAS_32
+	u32 dst_ptr = (u32)((const void*)(dest));
+	u32 src_ptr = (u32)((const void*)(source));
+	u32 alignment = sizeof(u32);
+#else
+	#error Unknown Platform
 #endif
 
-	// Align to nearest large boundary
-#if ATLAS_64
-	if (size % sizeof(u64) != 0) { // Align if needed
-#else
-	if (size % sizeof(u32) != 0) { // Align if needed
-#endif
+	if (dst_ptr % alignment != 0 || src_ptr % alignment != 0) {
+		// Memory is not aligned well, fall back on slow copy
 		u8* dst = (u8*)dest;
 		const u8* src = (const u8*)source;
-		while (size % sizeof(u32) != 0) {
-			*dst = *src;
-			dst++;
-			src++;
-			size -= 1;
+		for (u32 i = 0; i < size; ++i) {
+			dst[i] = src[i];
 		}
-		dest = dst;
-		source = src;
+		return;
 	}
 
 #if ATLAS_64
@@ -630,35 +625,53 @@ void Memory::Copy(void* dest, const void* source, u32 size, const char* location
 #endif
 }
 
-
+// MSVC generates a recursive memset with this implementation. The naive one works fine.
+#pragma optimize( "", off )
 void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
+	if (memory == 0) {
+		return; // Can't set null!
+	}
 #if 0
 	u8* mem = (u8*)memory;
 	for (u32 i = 0; i < size; ++i) {
 		mem[i] = value;
 	}
+
+	return;
 #endif
 
 	// Above is the naive implementation, and below is a bit more optimized one
 	// This could still be optimized further by going wider, it's fast enough for me
 
 #if ATLAS_64
-	if (size % sizeof(u64) != 0) { // Align if needed
+	u64 ptr = (u64)((const void*)(memory));
+	u64 alignment = sizeof(u64);
+#elif ATLAS_32
+	u32 ptr = (u32)((const void*)(memory));
+	u32 alignment = sizeof(u32);
 #else
-	if (size % sizeof(u32) != 0) { // Align if needed
+	#error Unknown Platform
 #endif
-		u8* mem = (u8*)memory;
-		while (size % sizeof(u32) != 0) {
-			*mem = value;
-			mem++;
-			size -= 1;
+
+	// Algin memory if needed
+	assert(alignment >= (ptr % alignment), "");
+	u32 alignDelta = (u32)(alignment - (ptr % alignment));
+	assert(alignDelta <= alignment, "");
+	assert(size >= alignDelta, "");
+
+	u8* mem = (u8*)(memory);
+	if (alignDelta != 0) {
+		for (u32 iter = 0; iter < alignDelta; ++iter) {
+			mem[iter] = value;
 		}
-		memory = mem;
+
+		mem += alignDelta;
+		size -= alignDelta;
 	}
 
 #if ATLAS_64
 	u64 size_64 = size / sizeof(u64);
-	u64* ptr_64 = (u64*)memory;
+	u64* ptr_64 = (u64*)mem;
 	u32 v32 = (((u32)value) << 8) | (((u32)value) << 16) | (((u32)value) << 24) | ((u32)value);
 	u64 val_64 = (((u64)v32) << 32) | ((u64)v32);
 	for (u32 i = 0; i < size_64; ++i) {
@@ -668,7 +681,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 
 #if ATLAS_64
 	u32 size_32 = (u32)((size - size_64 * sizeof(u64)) / sizeof(u32));
-	u32* ptr_32 = (u32*)(ptr_64 + size_64);;
+	u32* ptr_32 = (u32*)(ptr_64 + size_64);
 #else
 	u32 size_32 = size / sizeof(u32);
 	u32* ptr_32 = (u32*)memory;
@@ -690,7 +703,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	}
 
 #if ATLAS_64
-	u32 size_8 = (u32)(size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16));
+	u32 size_8 = (u32)((size - size_64 * sizeof(u64) - size_32 * sizeof(u32) - size_16 * sizeof(u16)) / sizeof(u8));
 #else
 	u32 size_8 = (size - size_32 * sizeof(u32) - size_16 * sizeof(u16));
 #endif
@@ -707,6 +720,7 @@ void Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	#error Unknown Platform
 #endif
 }
+#pragma optimize( "", on )
 
 void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const char* location) {
 	if (bytes == 0) {
@@ -912,7 +926,6 @@ void Memory::Release(void* memory, Allocator* allocator, const char* location) {
 }
 
 #if MEM_IMPLEMENT_MALLOC
-
 extern "C" void* __cdecl malloc(Memory::ptr_type bytes) {
 	return Memory::Allocate((u32)bytes, 0, Memory::GlobalAllocator, "internal - malloc");
 }
@@ -1319,7 +1332,9 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 
 			u32 pathLen = 0;
 #if MEM_TRACK_LOCATION
-			pathLen = strlen((const u8*)iter->location);
+			if (iter->location != 0) {
+				pathLen = strlen((const u8*)iter->location);
+			}
 #endif
 
 			if (memSize < allocator->pageSize / 4 || memSize < (pathLen + pathLen / 4)) { // Drain occasiaonally

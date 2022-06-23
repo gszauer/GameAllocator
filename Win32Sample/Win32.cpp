@@ -878,7 +878,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				units = 1024 * 1024;
 			}
 
-			malloc(howMany * (u32)units);
+			Memory::Allocate(howMany * (u32)units);
 
 			update = true;
 		}
@@ -891,7 +891,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				for (; iter != 0 && counter != selection; iter = (iter->nextOffset == 0)? 0 : (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset), counter++);
 				WinAssert(counter == selection);
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-				free(mem);
+				Memory::Release(mem);
 			}
 			update = true;
 		}
@@ -904,7 +904,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				}
 
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-				free(mem);
+				Memory::Release(mem);
 
 				iter = next;
 			}
@@ -1099,7 +1099,7 @@ extern "C" DWORD CALLBACK run() {
 	while (iter != 0) {
 		Memory::Allocation* next = (iter->nextOffset == 0) ? 0 :  (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset);
 		u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-		free(mem);
+		Memory::Release(mem);
 
 		iter = next;
 	}
