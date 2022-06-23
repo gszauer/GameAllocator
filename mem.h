@@ -308,7 +308,7 @@ namespace Memory {
 	// Memset and Memcpy utility functions. One big difference is that this set function only takes a u8.
 	// both of these functions work on larger data types, then work their way down. IE: they try to set or
 	// copy the memory using u64's, then u32's, then u16's, and finally u8's
-	void Set(void* memory, u8 value, u32 size, const char* location = 0);
+	void* Set(void* memory, u8 value, u32 size, const char* location = 0);
 	void Copy(void* dest, const void* source, u32 size, const char* location = 0);
 
 	// The debug namespace let's you access information about the current state of the allocator,
