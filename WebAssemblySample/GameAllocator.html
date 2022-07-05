@@ -1,0 +1,66 @@
+<!doctype html>  
+<html lang="en">  
+    <head>  
+        <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+        <meta charset="utf-8">  
+        <title>Game Memory Allocator, WASM</title>  
+        <meta name="description" content="Game Memory Allocator, WASM, Web Assembly">  
+        <script type="text/javascript" src="GameAllocator.js"></script>
+        <link rel="stylesheet" href="GameAllocator.css" />
+    </head>  
+    <body>
+        <div id="config">
+            <p><strong>Configure allocator</strong></p>
+            <div>
+                <input type="number" id="heap-size" value="8">
+                <select id="heap-unit">
+                    <option value="bytes">bytes</option>
+                    <option value="kilobytes">kilobytes</option>
+                    <option selected value="megabytes">megabytes</option>
+                </select>
+                <button type="button" id="allocator-init" onclick="init();">Initialize</button>
+            </div>
+        </div>
+        <div id="mem">
+            <div id="chart">
+                <div class="red"></div>
+                <div class="green"></div>
+                <div class="blue"></div>
+            </div>
+            <div id="bottom">
+                <div id="command">
+                    <div class="commandrow">
+                        <input type="number" id="allocation-size" class="onethird" value="1">
+                        <select id="allocation-unit" class="onethird">
+                            <option value="bytes" selected>bytes</option>
+                            <option value="kilobytes">kilobytes</option>
+                            <option value="megabytes">megabytes</option>
+                        </select>
+                        <button type="button" id="allocation-allocate" class="onethird" onclick="allocate_mem();">Allocate</button>
+                    </div>
+                    <div class="commandrow">
+                        <button type="button" id="free-all" class="onethird" onclick="free_all();">Free All</button>
+                        <button type="button" id="free-selected" class="onethird"  onclick="free_selected();">Free Selected</button>
+                        <button type="button" id="dump-alloc" class="onethird" onclick="dump_state();">Dump State</button>
+                    </div>
+                    <div class="commandrow"></div>
+                    <div class="commandrow">
+                        <div class="fullrow" id="metadata-row1">Tracking XX Pages, XX KiB (XX MiB)</div>
+                    </div>
+                    <div class="commandrow">
+                        <div class="fullrow" id="metadata-row2">Pages: XX free, XX used, XX overhead</div>
+                    </div>
+                    <div class="commandrow">
+                        <div class="fullrow" id="metadata-row3">Requested: XX bytes (~XX MiB)</div>
+                    </div>
+                    <div class="commandrow">
+                        <div class="fullrow" id="metadata-row4">Served: XX bytes (~XX MiB)</div>
+                    </div>
+                </div>
+                <select id="allocations" multiple>
+                    <option>Size: XX/XX bytes, Pages: XX, On Line XX, In File XX</option>
+                </select>
+            </div>
+        </div>
+    </body>  
+</html>

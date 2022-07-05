@@ -30,14 +30,30 @@ Memory::Allocator* Memory::GlobalAllocator;// = 0;
 	#define assert(cond, msg) ;
 #endif
 
-#define NotImplementedException() (*(char*)((void*)0) = '\0')
+#if _WASM32
+	#define NotImplementedException() __builtin_trap()
+	/*extern "C" {
+		extern void wasmConsoleLog(const char* msg, int len);
+	}*/
+#else
+	#define NotImplementedException() (*(char*)((void*)0) = '\0')
+#endif
 
 namespace Memory {
 	static void Assert(bool condition, const char* msg, u32 line, const char* file) {
+#if _WASM32
+		if (condition == false) {
+            u32 wasmLen = 0;
+            for (const char* i = msg; msg != 0 && *i != '\0'; ++i, ++wasmLen);
+            //wasmConsoleLog(msg, wasmLen);
+            __builtin_trap();
+		}
+#else
 		char* data = (char*)((void*)0);
 		if (condition == false) {
 			*data = '\0';
 		}
+#endif
 	}
 
 	static inline u32 AllocatorPaddedSize() {
@@ -77,8 +93,8 @@ namespace Memory {
 				if (head->nextOffset != 0) {
 					headerNext = (Allocation*)((u8*)allocator + head->nextOffset);
 				}
-				assert(allocNext == headerNext, "");
-				assert(headerNext->prevOffset == allocationOffset, "");
+				assert(allocNext == headerNext, __LOCATION__);
+				assert(headerNext->prevOffset == allocationOffset, __LOCATION__);
 				headerNext->prevOffset = 0;
 			}
 			Allocation* next = 0;
@@ -90,12 +106,12 @@ namespace Memory {
 		else {
 			if (allocation->nextOffset != 0) {
 				Allocation* _next = (Allocation*)((u8*)allocator + allocation->nextOffset);
-				assert(_next->prevOffset == allocationOffset, "");
+				assert(_next->prevOffset == allocationOffset, __LOCATION__);
 				_next->prevOffset = allocation->prevOffset;
 			}
 			if (allocation->prevOffset != 0) {
 				Allocation* _prev = (Allocation*)((u8*)allocator + allocation->prevOffset);
-				assert(_prev->nextOffset == allocationOffset, "");
+				assert(_prev->nextOffset == allocationOffset, __LOCATION__);
 				_prev->nextOffset = allocation->nextOffset;
 			}
 		}
@@ -120,15 +136,15 @@ namespace Memory {
 
 	// Returns 0 on error. Since the first page is always tracking overhead it's invalid for a range
 	static inline u32 FindRange(Allocator* allocator, u32 numPages, u32 searchStartBit) {
-		assert(allocator != 0, "");
-		assert(numPages != 0, "");
+		assert(allocator != 0, __LOCATION__);
+		assert(numPages != 0, __LOCATION__);
 
 		u32 * mask = (u32*)AllocatorPageMask(allocator);
 		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
 		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
 		assert(allocator->size % allocator->pageSize == 0, "Memory::FindRange, the allocators size must be a multiple of Memory::PageSize, otherwise there would be a partial page at the end");
-		assert(mask != 0, "");
-		assert(numBitsInMask != 0, "");
+		assert(mask != 0, __LOCATION__);
+		assert(numBitsInMask != 0, __LOCATION__);
 
 		u32 startBit = 0;
 		u32 numBits = 0;
@@ -194,7 +210,7 @@ namespace Memory {
 		assert(numBits == numPages, "Memory::FindRange Could not find enough memory to fufill request");
 		assert(startBit != 0, "Memory::FindRange Could not memory fufill request");
 		if (numBits != numPages || startBit == 0 || allocator->size % allocator->pageSize != 0) {
-			assert(false, "");
+			assert(false, __LOCATION__);
 			return 0;
 		}
 
@@ -202,16 +218,16 @@ namespace Memory {
 	}
 
 	static inline void SetRange(Allocator* allocator, u32 startBit, u32 bitCount) {
-		assert(allocator != 0, "");
-		assert(bitCount != 0, "");
+		assert(allocator != 0, __LOCATION__);
+		assert(bitCount != 0, __LOCATION__);
 
 		u32* mask = (u32*)AllocatorPageMask(allocator);
 		assert(allocator->size % allocator->pageSize == 0, "Memory::FindRange, the allocators size must be a multiple of Memory::PageSize, otherwise there would be a partial page at the end");
-		assert(mask != 0, "");
+		assert(mask != 0, __LOCATION__);
 
 #if _DEBUG
 		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
-		assert(numBitsInMask != 0, "");
+		assert(numBitsInMask != 0, __LOCATION__);
 #endif
 		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
 
@@ -222,9 +238,9 @@ namespace Memory {
 
 			assert(m < numElementsInMask, "indexing mask out of range");
 #if _DEBUG
-			assert(i < numBitsInMask, "");
+			assert(i < numBitsInMask, __LOCATION__);
 			bool set = mask[m] & (1 << b);
-			assert(!set, "");
+			assert(!set, __LOCATION__);
 #endif
 
 			mask[m] |= (1 << b);
@@ -239,16 +255,16 @@ namespace Memory {
 	}
 
 	static inline void ClearRange(Allocator* allocator, u32 startBit, u32 bitCount) {
-		assert(allocator != 0, "");
-		assert(bitCount != 0, "");
+		assert(allocator != 0, __LOCATION__);
+		assert(bitCount != 0, __LOCATION__);
 
 		u32* mask = (u32*)AllocatorPageMask(allocator);
 		assert(allocator->size % allocator->pageSize == 0, "Memory::FindRange, the allocators size must be a multiple of Memory::PageSize, otherwise there would be a partial page at the end");
-		assert(mask != 0, "");
+		assert(mask != 0, __LOCATION__);
 
 #if _DEBUG
 		u32 numBitsInMask = AllocatorPageMaskSize(allocator) * 8;
-		assert(numBitsInMask != 0, "");
+		assert(numBitsInMask != 0, __LOCATION__);
 #endif
 
 		u32 numElementsInMask = AllocatorPageMaskSize(allocator) / (TrackingUnitSize / 8);
@@ -261,15 +277,15 @@ namespace Memory {
 			assert(m < numElementsInMask, "indexing mask out of range");
 
 #if _DEBUG
-			assert(i < numBitsInMask, "");
+			assert(i < numBitsInMask, __LOCATION__);
 			bool set = mask[m] & (1 << b);
-			assert(set, "");
+			assert(set, __LOCATION__);
 #endif
 
 			mask[m] &= ~(1 << b);
 		}
 
-		assert(allocator->numPagesUsed != 0, "");
+		assert(allocator->numPagesUsed != 0, __LOCATION__);
 		assert(allocator->numPagesUsed >= bitCount != 0, "underflow");
 		allocator->numPagesUsed -= bitCount;
 	}
@@ -297,8 +313,8 @@ namespace Memory {
 
 			// Figure out how many blocks fit into this page
 			const u32 numBlocks = allocator->pageSize / blockSize;
-			assert(numBlocks > 0, "");
-			assert(numBlocks < 128, "");
+			assert(numBlocks > 0, __LOCATION__);
+			assert(numBlocks < 128, __LOCATION__);
 
 			// For each block in this page, initialize it's header and add it to the free list
 			for (u32 i = 0; i < numBlocks; ++i) {
@@ -369,7 +385,7 @@ namespace Memory {
 		Allocation* header = (Allocation*)((u8*)memory - sizeof(Allocation));
 		assert(header->size != 0, "Double Free!"); // Make sure it's not a double free
 		if (header->size == 0) {
-			assert(false, "");
+			assert(false, __LOCATION__);
 			return;
 		}
 		u32 oldSize = header->size;
@@ -393,7 +409,7 @@ namespace Memory {
 		bool releasePage = true;
 		
 		const u32 numAllocationsPerPage = allocator->pageSize / blockSize;
-		assert(numAllocationsPerPage >= 1, "");
+		assert(numAllocationsPerPage >= 1, __LOCATION__);
 		for (u32 i = 0; i < numAllocationsPerPage; ++i) {
 			Allocation* alloc = (Allocation*)mem;
 			if (alloc->size > 0) {
@@ -410,13 +426,13 @@ namespace Memory {
 			for (u32 i = 0; i < numAllocationsPerPage; ++i) {
 				Allocation* iter = (Allocation*)mem;
 				mem += blockSize;
-				assert(iter != 0, "");
+				assert(iter != 0, __LOCATION__);
 
 				RemoveFromList(allocator, freeList, iter);
 			}
 
 			// Clear the tracking bits
-			assert(startPage > 0, "");
+			assert(startPage > 0, __LOCATION__);
 			ClearRange(allocator, startPage, 1);
 		}
 
@@ -438,24 +454,35 @@ u32 Memory::AlignAndTrim(void** memory, u32* size, u32 alignment, u32 pageSize) 
 #endif
 	u32 delta = 0;
 
-	// Align to 8 byte boundary. This is so the mask array lines up on a u64
-	u32 alignmentDelta = alignment - (u32)(ptr % alignment);
-	assert(alignmentDelta < *size, "");
+    if (alignment != 0) {
+        // Align to 8 byte boundary. This is so the mask array lines up on a u64
+        u32 alignmentDelta = alignment - (u32)(ptr % alignment);
+        assert(alignmentDelta <= (*size), __LOCATION__);
+        if (alignmentDelta > *size) { // In release mode, we want to fail on asserts
+            *memory = 0;
+            *size = 0;
+            return 0;
+        }
 
-	assert(*size >= alignmentDelta, "");
-	if (ptr % alignment != 0) {
-		u8* mem = (u8*)(*memory);
+        if (ptr % alignment != 0) {
+            u8* mem = (u8*)(*memory);
 
-		delta += alignmentDelta;
-		mem += alignmentDelta;
-		*size -= alignmentDelta;
-		*memory = mem;
-	}
+            delta += alignmentDelta;
+            mem += alignmentDelta;
+            *size -= alignmentDelta;
+            *memory = mem;
+        }
+    }
 
 	// Trim to page size (4096) to make sure the provided memory can be chunked up perfectly
 	if ((*size) % pageSize != 0) {
 		u32 diff = (*size) % pageSize;
-		assert(*size >= diff, "");
+		assert(*size >= diff, __LOCATION__);
+        if (*size < diff) { // In release mode, fail on assert
+            *memory = 0;
+            *size = 0;
+            return 0;
+        }
 		*size -= diff;
 		delta += diff;
 	}
@@ -507,7 +534,7 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes, u32 pageSize) {
 	allocator->requested = 0;
 
 	if (ptr % AllocatorAlignment != 0 || bytes % pageSize != 0 || bytes / pageSize < 10) {
-		assert(false, "");
+		assert(false, __LOCATION__);
 		return 0;
 	}
 	
@@ -657,10 +684,10 @@ void* Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	}
 
 	// Algin memory if needed
-	assert(alignment >= (ptr % alignment), "");
+	assert(alignment >= (ptr % alignment), __LOCATION__);
 	u32 alignDelta = (u32)(alignment - (ptr % alignment));
-	assert(alignDelta <= alignment, "");
-	assert(size >= alignDelta, "");
+	assert(alignDelta <= alignment, __LOCATION__);
+	assert(size >= alignDelta, __LOCATION__);
 
 	u8* mem = (u8*)(memory);
 	if (alignDelta != 0) {
@@ -738,7 +765,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const cha
 		allocator = GlobalAllocator;
 		assert(allocator != 0, "Memory::Allocate couldn't assign global allocator");
 		if (allocator == 0) {
-			assert(false, "");
+			assert(false, __LOCATION__);
 			return 0;
 		}
 	}
@@ -761,7 +788,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const cha
 	
 	// We can record the request here. It's made before the allocation callback, and is valid for sub-allocations too.
 	allocator->requested += bytes;
-	assert(allocator->requested < allocator->size, "");
+	assert(allocator->requested < allocator->size, __LOCATION__);
 
 #if MEM_USE_SUBALLOCATORS
 	if (alignment == 0) {
@@ -797,7 +824,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const cha
 	SetRange(allocator, firstPage, numPagesRequested);
 
 	if (firstPage == 0 || allocator->size % allocator->pageSize != 0) {
-		assert(false, "");
+		assert(false, __LOCATION__);
 		return 0; // Fail this allocation in release mode
 	}
 	
@@ -831,7 +858,7 @@ void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const cha
 #endif
 
 	// Track allocated memory
-	assert(allocation != allocator->active, ""); // Should be impossible, but we could have bugs...
+	assert(allocation != allocator->active, __LOCATION__); // Should be impossible, but we could have bugs...
 	AddtoList(allocator, &allocator->active, allocation);
 
 	// Return memory
@@ -1035,7 +1062,14 @@ namespace Memory {
 				p_(a), sz_(N - 1) {
 			}
 			constexpr char operator[](ptr_type n) const noexcept { // []
+#if _WASM32
+				if (n >= sz_) {
+					__builtin_trap();
+				}
+				return p_[n];
+#else
 				return n < sz_ ? p_[n] : (*(char*)((void*)0) = '\0');
+#endif
 			}
 			constexpr u32 size() const noexcept { // string length
 				return (u32)sz_;
@@ -1366,7 +1400,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 #else
 			{
 #endif
-				assert(pathLen == 0, "");
+				assert(pathLen == 0, __LOCATION__);
 				
 				constexpr str_const out_loc("null");
 				Copy(mem, out_loc.begin(), out_loc.size(), l);
@@ -1375,7 +1409,7 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			}
 #if MEM_TRACK_LOCATION
 			else {
-				assert(pathLen != 0, "");
+				assert(pathLen != 0, __LOCATION__);
 				Copy(mem, iter->location, pathLen, l);
 				mem += pathLen;
 				memSize -= pathLen;

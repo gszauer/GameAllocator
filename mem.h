@@ -144,7 +144,7 @@ Resources:
 // allocation. If MEM_FIRST_FIT is set to 0, then the memory is searched iterativley. Ie, when we 
 // allocate the position in memory after the allocation is saved, and the next allocation starts
 // searching from there.
-#define MEM_FIRST_FIT 0
+#define MEM_FIRST_FIT 1
 
 // If set to 1, the allocator will clear or fill memory when allocating it
 #define MEM_CLEAR_ON_ALLOC 0 // Clears memory on each allocation
@@ -185,7 +185,7 @@ Resources:
 
 #ifndef ATLAS_I32
 	#define ATLAS_I32
-	typedef __int32 i32;
+	typedef int i32;
 	static_assert (sizeof(i32) == 4, "i32 should be defined as a 4 byte type");
 #endif 
 
@@ -201,16 +201,42 @@ Resources:
 	static_assert (sizeof(i64) == 8, "i64 should be defined as an 8 byte type");
 #endif
 
+
 #if _WIN64
 	#ifdef ATLAS_32
 		#error Can't define both 32 and 64 bit system
 	#endif
 	#define ATLAS_64 1
+	namespace Memory {
+		typedef u64 ptr_type;
+		typedef i64 diff_type;
+		static_assert (sizeof(ptr_type) == 8, "ptr_type should be defined as an 8 byte type on a 64 bit system");
+		static_assert (sizeof(diff_type) == 8, "diff_type should be defined as an 8 byte type on a 64 bit system");
+	}
 #elif _WIN32
 	#ifdef ATLAS_64
 		#error Can't define both 32 and 64 bit system
 	#endif
 	#define ATLAS_32 1
+
+	namespace Memory {
+		typedef u32 ptr_type;
+		typedef i32 diff_type;
+		static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
+		static_assert (sizeof(diff_type) == 4, "diff_type should be defined as a 4 byte type on a 32 bit system");
+	}
+#elif _WASM32
+	#ifdef ATLAS_64
+		#error Can't define both 32 and 64 bit system
+	#endif
+	#define ATLAS_32 1
+
+	namespace Memory {
+		typedef unsigned long ptr_type;
+		typedef long diff_type;
+		static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
+		static_assert (sizeof(diff_type) == 4, "diff_type should be defined as a 4 byte type on a 32 bit system");
+	}
 #else
 	#error Unknown platform
 #endif
@@ -322,24 +348,6 @@ namespace Memory {
 		void PageContent(Allocator* allocator, u32 page, WriteCallback callback, void* userdata = 0);
 		u8* DevPage(Allocator* allocator);
 	}
-
-	// Define pointer types based on current platform.
-#ifndef ATLAS_PTR
-	#define ATLAS_PTR
-	#if ATLAS_64
-		typedef u64 ptr_type;
-		typedef i64 diff_type;
-		static_assert (sizeof(ptr_type) == 8, "ptr_type should be defined as an 8 byte type on a 64 bit system");
-		static_assert (sizeof(diff_type) == 8, "diff_type should be defined as an 8 byte type on a 64 bit system");
-	#elif ATLAS_32
-		typedef u32 ptr_type;
-		typedef i32 diff_type;
-		static_assert (sizeof(ptr_type) == 4, "ptr_type should be defined as a 4 byte type on a 32 bit system");
-		static_assert (sizeof(diff_type) == 4, "diff_type should be defined as a 4 byte type on a 32 bit system");
-	#else
-		#error Unknown platform
-	#endif
-#endif
 }
 
 

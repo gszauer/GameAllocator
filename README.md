@@ -5,9 +5,9 @@
 The memory will be broken up into pages (4 KiB by default) and tracked at the page granularity. 
 A sub-allocator provided which breaks the page up into a fast free list for smaller allocation.
 
-Implementations and ```#defines``` for ```malloc```, ```new```, ```new[]```, ```free```, ```delete```, and ```delete[]``` are optionally provided. An optional STL allocator is also optionally provided.
+Implementations and ```#defines``` for ```malloc```, ```new```, ```new[]```, ```free```, ```delete```, and ```delete[]``` are optionally provided. An optional STL allocator is also provided.
 
-All of the code is in [mem.h](mem.h) and [mem.cpp](mem.cpp). The [Win32Sample/Win32.cpp](Win32Sample/Win32.cpp) file isn't production ready, it's a hacky font-end to the memory manager. The same data that it displays is available trough the ```Memory::Debug``` namespace.
+> All the code for managing memory is in [mem.h](mem.h) and [mem.cpp](mem.cpp). The sample files ([Win32Sample/Win32.cpp](Win32Sample/Win32.cpp), and [WebAssemblySample/WebAssembly.cpp](WebAssemblySample/WebAssembly.cpp)) are not production ready,they are a hacky font-end to the memory manager for the given platform. The same data that it displays is available trough the ```Memory::Debug``` namespace.
 
 ![Win32 memory allocator](Win32Sample/Win32Small.png)
 
@@ -36,7 +36,7 @@ void run() {
 
     // Initialize the global allocator
     u32 lost = Memory::AlignAndTrim(&memory, &size, Memory::DefaultPageSize);
-    Memory::GlobalAllocator = Memory::Initialize(memory, size, Memory::DefaultPageSize);
+    Memory::GlobalAllocator = Memory::Initialize(memory, size, Memory::AllocatorAlignment, Memory::DefaultPageSize);
 
     // Allocate & release memory
     int* number = Memory::Allocate(sizeof(int)); // Only the number of bytes is required
@@ -113,3 +113,5 @@ Page chart:
 * C++ overload [new](https://cplusplus.com/reference/new/operator%20new/), [new[]](https://cplusplus.com/reference/new/operator%20new[]/), [delete](https://cplusplus.com/reference/new/operator%20delete/), and [delete[]](https://cplusplus.com/reference/new/operator%20delete[]/)
 * [Stack overflow memory alignment discussion](https://stackoverflow.com/questions/227897/how-to-allocate-aligned-memory-only-using-the-standard-library)
 * [Scott Schurr's const string](https://www.youtube.com/watch?v=BUnNA2dLRsU)
+* [Surma, C to WASM without emscripten](https://surma.dev/things/c-to-webassembly/)
+* [Schell, C to WASM without emscripten](https://schellcode.github.io/webassembly-without-emscripten#getting-wasm-opt)

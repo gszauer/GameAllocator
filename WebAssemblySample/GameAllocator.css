@@ -1,0 +1,129 @@
+html, body {
+    min-height: 100% !important;
+    height: 100%;
+    border: 0px;
+    padding: 0px;
+    margin: 0px;
+    background-color: rgb(30, 30, 30);
+    color: rgb(220, 220, 220);
+}
+#mem {
+    border: 0px;
+    padding: 0px;
+    margin: 0px;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    display: none;
+}
+#bottom {
+    height: 40%;
+    width: 100%;
+    border: 0px;
+    padding: 0px;
+    margin: 0px;
+    display:flex;
+}
+#command {
+    height: 100%;
+    width: 30%;
+    border: 0px;
+    padding: 0px;
+    margin: 0px;
+    background-color: rgb(40, 40, 40);
+    font-weight: bold;
+}
+#allocations {
+    height: 100%;
+    width: 70%;
+    border: 0px;
+    padding: 5px;
+    margin: 0px;
+    background-color: rgb(30, 30, 30);
+    color: rgb(220, 220, 220);
+}
+.commandrow {
+    display:flex;
+    width: auto;
+    height: 30px;
+    margin: 5px;
+}
+.onethird {
+    padding: 0px;
+    border: 0px;
+    margin: 5px;
+    margin-bottom: 0px;
+    width: 33%;
+    min-width: 50px;
+    max-width: 400px;
+    overflow: hidden;
+}
+.fullrow {
+    padding: 0px;
+    border: 0px;
+    margin: 0px;
+
+    width: 95%;
+    min-width: 95%;
+    max-width: 95%;
+    
+    height: 22px;
+    min-height: 22px;
+    max-height: 22px;
+    margin-left: 5px;
+}
+#chart {
+    height: 60%;
+    width: 100%;
+    background-color: rgb(55, 55, 55);
+    border: 0px;
+    padding: 0px;
+    margin: 0px;
+    display: flex;
+    overflow: scroll;
+    overflow-x: hidden;
+    flex-wrap: wrap;
+    align-content: start;
+}
+.red,
+.green,
+.blue {
+    background-color: aquamarine;
+    margin: 1px;
+    padding: 0px;
+    border: 0px;
+    width: 5px;
+    min-width: 5px;
+    max-width: 5px;
+    height: 7px;
+    min-height: 7px;
+    max-height: 7px;
+}
+.red {
+    background-color: rgb(200, 50, 25);
+}
+.green {
+    background-color: rgb(50, 200, 25);
+}
+.blue {
+    background-color: rgb(50, 25, 200);
+}
+#config {
+    position: absolute;
+
+    width: 400px;
+    min-width: 400px;
+    max-width: 400px;
+    height: 50px;
+    max-height: 25px;
+    min-height: 25px;
+
+    left: 50%;
+    top: 50%;
+
+    margin: 0px;
+    padding: 0px;
+    border: 0px;
+    margin-left: -200px;
+    margin-top: -25px;
+}
