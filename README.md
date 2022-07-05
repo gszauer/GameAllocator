@@ -35,8 +35,8 @@ void run() {
     LPVOID memory = VirtualAlloc(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); // Windows
 
     // Initialize the global allocator
-    u32 lost = Memory::AlignAndTrim(&memory, &size, Memory::DefaultPageSize);
-    Memory::GlobalAllocator = Memory::Initialize(memory, size, Memory::AllocatorAlignment, Memory::DefaultPageSize);
+    u32 lost = Memory::AlignAndTrim(&memory, &size, Memory::AllocatorAlignment, Memory::DefaultPageSize);
+    Memory::GlobalAllocator = Memory::Initialize(memory, size, Memory::DefaultPageSize);
 
     // Allocate & release memory
     int* number = Memory::Allocate(sizeof(int)); // Only the number of bytes is required
