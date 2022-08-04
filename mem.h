@@ -152,18 +152,23 @@ Resources:
 
 // If set to 1, "C" functions for malloc, free, etc are provided. 
 #define MEM_IMPLEMENT_MALLOC 1
+// TODO: Remove this
 
 // If set to 1, #define will be declared for malloc
 #define MEM_DEFINE_MALLOC 0
+// TODO: Remove this
 
 // If set to 1, C++ functions for new, delete, etc are provided. 
 #define MEM_IMPLEMENT_NEW 1
+// TODO: Remove this
 
 // If set to 1, #define will be declared for new 
 #define MEM_DEFINE_NEW 0
+// TODO: Remove this
 
 // If set to 1, the Memroy::STLAllocator class is defined 
 #define MEM_IMPLEMENT_STL 1
+// TODO: Remove this
 
 // Disables sub-allocators if defined
 #define MEM_USE_SUBALLOCATORS 1
@@ -357,9 +362,9 @@ static_assert (sizeof(Memory::Allocation) % 8 == 0, "Memory::Allocation should b
 static_assert (Memory::TrackingUnitSize% Memory::AllocatorAlignment == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
 static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");
 #if MEM_TRACK_LOCATION
-static_assert (sizeof(Memory::Allocation) == 24, "Memory::Allocation should be 24 bytes (192 bits)");
+	static_assert (sizeof(Memory::Allocation) == 24, "Memory::Allocation should be 24 bytes (192 bits)");
 #else
-static_assert (sizeof(Memory::Allocation) == 16, "Memory::Allocation should be 16 bytes (128 bits)");
+	static_assert (sizeof(Memory::Allocation) == 16, "Memory::Allocation should be 16 bytes (128 bits)");
 #endif
 
 // Use the __LOCATION__ macro to pack both __LINE__ and __FILE__ into a c string

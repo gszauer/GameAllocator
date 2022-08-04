@@ -32,14 +32,14 @@ Memory::Allocator* Memory::GlobalAllocator;// = 0;
 
 #if _WASM32
 	#define NotImplementedException() __builtin_trap()
-	/*extern "C" {
-		extern void wasmConsoleLog(const char* msg, int len);
-	}*/
 #else
 	#define NotImplementedException() (*(char*)((void*)0) = '\0')
 #endif
 
 namespace Memory {
+	namespace Debug {
+		u32 u32toa(u8* dest, u32 destSize, u32 num);
+	}
 	static void Assert(bool condition, const char* msg, u32 line, const char* file) {
 #if _WASM32
 		if (condition == false) {
@@ -442,6 +442,255 @@ namespace Memory {
 	}
 #endif
 } // Namespace Memory
+
+#if _WASM32
+	#define export __attribute__ (( visibility( "default" ) )) extern "C"
+
+	extern unsigned char __heap_base;
+	extern unsigned char __data_end;
+
+	// These are wasm shim functions
+
+	export int GameAllocator_wasmHeapSize(int memSize) {
+		void* heapPtr = &__heap_base;
+
+		Memory::ptr_type heapAddr = (Memory::ptr_type)heapPtr;
+		Memory::ptr_type maxAddr = (Memory::ptr_type)memSize;
+
+		Memory::ptr_type heapSize = maxAddr - heapAddr;
+		return (int)heapSize;
+	}
+
+	export Memory::Allocator* GameAllocator_wasmInitialize(int heapSize) {
+		void* memory = &__heap_base;
+		u32 size = (u32)heapSize; //GameAllocator_wasmHeapSize(totalMemorySize);
+
+		Memory::AlignAndTrim(&memory, &size);
+		Memory::Allocator* allocator = Memory::Initialize(memory, size);
+		Memory::GlobalAllocator = allocator;
+
+		return allocator;
+	}
+	
+	export void GameAllocator_wasmShutdown(Memory::Allocator* allocator) {
+		Memory::Shutdown(allocator);
+	}
+	
+	export void* GameAllocator_wasmAllocate(Memory::Allocator* allocator, int bytes, int alignment) {
+		return Memory::Allocate(bytes, alignment, allocator, "GameAllocator_wasmAllocate");
+	}
+
+	export void GameAllocator_wasmRelease(Memory::Allocator* allocator, void* mem) {
+		Memory::Release(mem, allocator, "GameAllocator_wasmAllocate");
+	}
+
+	export void GameAllocator_wasmSet(void* mem, int val, int size) {
+		Memory::Set(mem, (u8)val, (u32)size, "GameAllocator_wasmAllocate");
+	}
+
+	export void GameAllocator_wasmCopy(void* dst, const void* src, int size) {
+		Memory::Copy(dst, src, (u32)size, "GameAllocator_wasmAllocate");
+	}
+
+	export int GameAllocator_wasmGetNumPages(Memory::Allocator* a) {
+        return a->size / a->pageSize;
+	}
+
+	export int GameAllocator_wasmGetNumPagesInUse(Memory::Allocator* a) {
+        return a->numPagesUsed;
+	}
+
+	export int GameAllocator_wasmGetPeekPagesUsed(Memory::Allocator* a) {
+        return a->peekPagesUsed;
+	}
+
+	export int GameAllocator_wasmGetRequestedBytes(Memory::Allocator* a) {
+        return a->requested;
+	}
+
+	export int GameAllocator_wasmGetServedBytes(Memory::Allocator* a) {
+		u32 maskSize = AllocatorPageMaskSize(a) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+		u32 metaDataSizeBytes = sizeof(Memory::Allocator) + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / a->pageSize;
+		if (metaDataSizeBytes % a->pageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * a->pageSize; // This way, allocatable will start on a page boundary
+		// Account for meta data
+		metaDataSizeBytes += a->pageSize;
+		numberOfMasksUsed += 1;
+
+		u32 numPages = a->size / a->pageSize;
+		u32 usedPages = a->numPagesUsed;
+		u32 freePages = numPages - usedPages;
+		u32 overheadPages = metaDataSizeBytes / a->pageSize;
+
+		return (usedPages - overheadPages) * a->pageSize;
+	}
+
+	export int GameAllocator_wasmIsPageInUse(Memory::Allocator* a, int page) {
+		u32 m = page / Memory::TrackingUnitSize;
+		u32 b = page % Memory::TrackingUnitSize;
+		u32 * mask = (u32*)Memory::AllocatorPageMask(a);
+
+		bool set = mask[m] & (1 << b);
+		return set;
+	}
+
+	export int GameAllocator_wasmGetSize(Memory::Allocator* a) {
+        return a->size;
+	}
+
+	export int GameAllocator_wasmGetNumOverheadPages(Memory::Allocator* a) {
+		u32 maskSize = Memory::AllocatorPageMaskSize(a) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+		u32 metaDataSizeBytes = Memory::AllocatorPaddedSize() + (maskSize * sizeof(u32));
+		u32 numberOfMasksUsed = metaDataSizeBytes / a->pageSize;
+		if (metaDataSizeBytes % a->pageSize != 0) {
+			numberOfMasksUsed += 1;
+		}
+		metaDataSizeBytes = numberOfMasksUsed * a->pageSize; // This way, allocatable will start on a page boundary
+		// Account for meta data
+		metaDataSizeBytes += a->pageSize;
+		numberOfMasksUsed += 1;
+
+		u32 overheadPages = metaDataSizeBytes / a->pageSize;
+
+		return (int)overheadPages;
+	}
+
+	// Helper functions
+	export int GameAllocator_wasmStrLen(const char* str) {
+		if (str == 0) {
+			return 0;
+		}
+
+		const char *s = str;
+		while (*s) {
+			++s;
+		}
+		return (s - str);
+	}
+
+    extern "C" void GameAllocator_jsBuildMemState(const u8* msg, int len);
+
+	export void GameAllocator_wasmDumpState(Memory::Allocator* allocator) {
+		Memory::Debug::MemInfo(allocator, [](const u8* mem, u32 size, void* userdata) {
+			GameAllocator_jsBuildMemState(mem, (int)size);
+		}, 0);
+	}
+
+	export void* GameAllocator_wasmGetAllocationDebugName(Memory::Allocator* allocator, void* _m) {
+		const char* l = "mem_GetAllocationDebugName";
+
+		u8* debugPage = Memory::Debug::DevPage(allocator);
+		u32 debugSize = allocator->pageSize;
+		
+		// Reset memory buffer
+		Memory::Set(debugPage, 0, debugSize, l);
+		u8* i_to_a_buff = debugPage; // Used to convert numbers to strings
+		const u32 i_to_a_buff_size = GameAllocator_wasmStrLen((const char*)"18446744073709551615") + 1; // u64 max
+		
+		u8* mem = i_to_a_buff + i_to_a_buff_size;
+		u32 memSize = allocator->pageSize - i_to_a_buff_size;
+		
+		u8* m = (u8*)_m - sizeof(Memory::Allocation);
+		Memory::Allocation* iter = (Memory::Allocation*)m;
+
+		Memory::Copy(mem, "Address: ", 9, l);
+		mem += 9; memSize -= 9;
+
+		u32 allocationOffset = (u32)((u8*)iter - (u8*)allocator);
+		i32 i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, allocationOffset);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", size: ", 8, l);
+		mem += 8; memSize -= 8;
+
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, iter->size);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", padded: ", 10, l);
+		mem += 10; memSize -= 10;
+
+		u32 alignment = iter->alignment;
+		u32 allocationHeaderPadding = 0;
+		if (alignment != 0) {  // Add padding to the header to compensate for alignment
+			allocationHeaderPadding = alignment - 1; // Somewhere in this range, we will be aligned
+		}
+
+		u32 realSize = iter->size + (u32)(sizeof(Memory::Allocation)) + allocationHeaderPadding;
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, realSize);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", alignment: ", 13, l);
+		mem += 13; memSize -= 13;
+
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, iter->alignment);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", first page: ", 14, l);
+		mem += 14; memSize -= 14;
+
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, (allocationOffset) / allocator->pageSize);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", prev: ", 8, l);
+		mem += 8; memSize -= 8;
+
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, iter->prevOffset);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		Memory::Copy(mem, ", next: ", 8, l);
+		mem += 8; memSize -= 8;
+
+		i_len = Memory::Debug::u32toa(i_to_a_buff, i_to_a_buff_size, iter->nextOffset);
+		Memory::Copy(mem, i_to_a_buff, i_len, l);
+		mem += i_len;
+		memSize -= i_len;
+
+		u32 pathLen = 0;
+	#if MEM_TRACK_LOCATION
+		if (iter->location != 0) {
+			pathLen = GameAllocator_wasmStrLen((const char*)iter->location);
+		}
+	#endif
+
+		Memory::Copy(mem, ", location: ", 12, l);
+		mem += 12; memSize -= 12;
+
+	#if MEM_TRACK_LOCATION
+		if (iter->location == 0) {
+	#else
+		{
+	#endif
+			Memory::Copy(mem, "null", 4, l);
+			mem += 4; memSize -= 4;
+		}   
+	#if MEM_TRACK_LOCATION
+		else {
+			Memory::Copy(mem, iter->location, pathLen, l);
+			mem += pathLen;
+			memSize -= pathLen;
+		}
+	#endif
+
+		*mem = '\0';
+
+		return debugPage + i_to_a_buff_size;
+	}
+#endif
 
 
 u32 Memory::AlignAndTrim(void** memory, u32* size, u32 alignment, u32 pageSize) {

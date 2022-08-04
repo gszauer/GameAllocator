@@ -6,7 +6,31 @@ html, body {
     margin: 0px;
     background-color: rgb(30, 30, 30);
     color: rgb(220, 220, 220);
+
+
+    text-decoration: none;
 }
+
+a:link {
+color: rgb(220, 220, 220);
+text-decoration: none;
+}
+
+a:visited {
+color: rgb(200, 200, 200);
+text-decoration: none;
+}
+
+a:hover {
+color: rgb(180, 180, 180);
+text-decoration: underline;
+}
+
+a:active {
+color: rgb(160, 160, 160);
+text-decoration: underline;
+}
+
 #mem {
     border: 0px;
     padding: 0px;
