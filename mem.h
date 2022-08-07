@@ -70,15 +70,6 @@ Compile flags:
 	MEM_CLEAR_ON_ALLOC    -> When set, memory will be cleared to 0 before being returned from Memory::Allocate
 	                         If both clear and debug on alloc are set, clear will take precedence
 	MEM_DEBUG_ON_ALLOC    -> If set, full page allocations will fill the padding of the page with "-MEMORY"
-	MEM_IMPLEMENT_MALLOC  -> Provide function declarations and implementations for: malloc, free, memset, and
-	                         memcpy. This method can not track allocation location.
-	MEM_DEFINE_MALLOC     -> If set, malloc will be declared as a #define for Memory::Allocate
-	                         and similarly free will be declared as a #define for Memory::Release
-	MEM_IMPLEMENT_NEW     -> Provide function declarations and implementations for new & delete
-	MEM_DEFINE_NEW        -> If set, new will be declared as a #define for Memory::Allocate,
-	                         and similarly delete will be declared as a #define for Memory::Release
-	MEM_IMPLEMENT_STL     -> If set, STLAllocator is defined. It can be used for STL allocators like so:
-	                         std::vector<int, Memory::STLAllocator<int>> numbers;
 	MEM_USE_SUBALLOCATORS -> If set, small allocations will be made using a free list allocaotr. There are free list
 	                         allocators for 64, 128, 256, 512, 1024 and 2049 byte allocations. Only allocations that
 							 don't specify an alignment can use the fast free list allocator. The sub-allocator will
@@ -149,26 +140,6 @@ Resources:
 // If set to 1, the allocator will clear or fill memory when allocating it
 #define MEM_CLEAR_ON_ALLOC 0 // Clears memory on each allocation
 #define MEM_DEBUG_ON_ALLOC 0 // Fills memory with Memory- on each allocation
-
-// If set to 1, "C" functions for malloc, free, etc are provided. 
-#define MEM_IMPLEMENT_MALLOC 1
-// TODO: Remove this
-
-// If set to 1, #define will be declared for malloc
-#define MEM_DEFINE_MALLOC 0
-// TODO: Remove this
-
-// If set to 1, C++ functions for new, delete, etc are provided. 
-#define MEM_IMPLEMENT_NEW 1
-// TODO: Remove this
-
-// If set to 1, #define will be declared for new 
-#define MEM_DEFINE_NEW 0
-// TODO: Remove this
-
-// If set to 1, the Memroy::STLAllocator class is defined 
-#define MEM_IMPLEMENT_STL 1
-// TODO: Remove this
 
 // Disables sub-allocators if defined
 #define MEM_USE_SUBALLOCATORS 1
@@ -246,6 +217,10 @@ Resources:
 	#error Unknown platform
 #endif
 
+inline void* operator new (Memory::ptr_type n, void* ptr) { 
+	return ptr; 
+};
+
 namespace Memory {
 	// The callback allocator can be used to register a callback with each allocator. It's the same callback signature for both Allocate and Release
 	typedef void (*Callback)(struct Allocator* allocator, void* allocationHeaderAddress, u32 bytesRequested, u32 bytesServed, u32 firstPage, u32 numPages);
@@ -294,6 +269,55 @@ namespace Memory {
 #if ATLAS_32
 		u32 padding_32bit[9];		// Padding to make sure the struct stays the same size in x64 / x86 builds
 #endif
+
+		void* Allocate(u32 bytes, u32 alignemnt = 0, const char* location = 0);
+		void Release(void* t, const char* location = 0);
+
+		template<class T, typename A1>
+		inline T* New(A1&& a1, const char* location = 0) {
+			const u32 bytes = sizeof(T);
+			const u32 alignment = 0;
+			void* memory = this->Allocate(bytes, alignment, location);
+			T* object = ::new (memory) T(a1);
+			return object;
+		}
+
+		template<class T, typename A1, typename A2>
+		inline T* New(A1&& a1, A2&& a2, const char* location = 0) {
+			const u32 bytes = sizeof(T);
+			const u32 alignment = 0;
+			void* memory = this->Allocate(bytes, alignment, location);
+			T* object = ::new (memory) T(a1, a2);
+			return object;
+		}
+
+		template<class T, typename A1, typename A2, typename A3>
+		inline T* New(A1&& a1, A2&& a2, A3&& a3, const char* location = 0) {
+			const u32 bytes = sizeof(T);
+			const u32 alignment = 0;
+			void* memory = this->Allocate(bytes, alignment, location);
+			T* object = ::new (memory) T(a1, a2, a3);
+			return object;
+		}
+
+		template<class T>
+		inline T* New(const char* location = 0) {
+			const u32 bytes = sizeof(T);
+			const u32 alignment = 0;
+			void* memory = this->Allocate(bytes, alignment, location);
+			T* object = ::new (memory) T();
+			return object;
+		}
+		// allocator->New<Object, >(__LOCATION__, path);
+		// f(x); // calls f<X&>(x)
+
+		// allocator->
+
+		template<class T>
+		inline void Delete(T* ptr) {
+			// TODO: Call inine free
+		}
+
 	};
 
 	// This is the allocator that malloc / new will use. You can have as many allocators as needed,
@@ -303,7 +327,6 @@ namespace Memory {
 	// so this page size is mostly important for larger allocations. Feel free to change to something more
 	// appropriate if needed.
 	const u32 DefaultPageSize = 4096;
-
 
 	// Don't change tracking unit size. The bitmask that tracks which pages are free is stored as an
 	// array of 32 bit integers. Changing this number would require changing how mem.cpp is implemented
@@ -329,12 +352,6 @@ namespace Memory {
 	// if you have any memory that was allocated but not released. This function doesn't do much, it exists
 	// to provide a bunch of asserts that ensure that an application is shutting down cleanly.
 	void Shutdown(Allocator* allocator);
-
-	// Functions to allocate / release memory from an allocator. The API is self explanatory. You can use the 
-	// __LOCATION__ defined at the end of this file to provide an optional location for each api call. 
-	// Keep in mind that the location is optional and only used if MEM_TRACK_LOCATION is on
-	void* Allocate(u32 bytes, u32 alignment = 0, Allocator* allocator = 0, const char* location = 0);
-	void Release(void* memory, Allocator* allocator = 0, const char* location = 0);
 
 	// Memset and Memcpy utility functions. One big difference is that this set function only takes a u8.
 	// both of these functions work on larger data types, then work their way down. IE: they try to set or
@@ -371,182 +388,6 @@ static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 
 #define atlas_xstr(a) atlas_str(a)
 #define atlas_str(a) #a
 #define __LOCATION__ "On line: " atlas_xstr(__LINE__) ", in file: " __FILE__
-
-// Provide interface for malloc / free
-#if MEM_IMPLEMENT_MALLOC
-	#if MEM_DEFINE_MALLOC
-		#undef malloc
-		#undef free
-		#undef memset
-		#undef memcpy
-	#endif
-
-	extern "C" void* __cdecl malloc(Memory::ptr_type bytes);
-	extern "C" void __cdecl free(void* data);
-	extern "C" void* __cdecl memset(void* mem, i32 value, Memory::ptr_type size);
-	extern "C" void* __cdecl memcpy(void* dest, const void* src, Memory::ptr_type size);
-	// for MSVC, these are functions, not intrinsic
-	#pragma function(memset, memcpy)
-#endif
-
-// Provide interface for new / delete
-#if MEM_IMPLEMENT_NEW
-	#if MEM_DEFINE_NEW
-		#undef new
-		#undef delete
-	#endif
-
-	namespace std {
-		struct nothrow_t;
-	}
-
-	void* __cdecl operator new (Memory::ptr_type size);
-	void* __cdecl operator new (Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept;
-	void* operator new (Memory::ptr_type size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept; // Non standard, tracked
-
-	void __cdecl operator delete (void* ptr) noexcept;
-	void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-	void __cdecl operator delete (void* ptr, Memory::ptr_type size) noexcept;
-	void __cdecl operator delete (void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept;
-
-	void* __cdecl operator new[](Memory::ptr_type size);
-	void* __cdecl operator new[](Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept;
-
-	void __cdecl operator delete[](void* ptr) noexcept;
-	void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept;
-	void __cdecl operator delete[](void* ptr, Memory::ptr_type size) noexcept;
-	void __cdecl operator delete[](void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept;
-#endif // The tracked allocator is #define-d as new is defined after STL allocator so #define new doesn't mess with placement new
-
-// Provide interface for STL allocators
-#if MEM_IMPLEMENT_STL
-namespace Memory {
-	template<typename T>
-	struct stl_identity {
-		typedef T type;
-	};
-
-	template <typename T>
-	T&& stl_forward(typename stl_identity<T>::type& param) {
-		return static_cast<T&&>(param);
-	}
-
-	template<typename T>
-	class STLAllocator {
-	public:
-		typedef ptr_type size_type;
-		typedef diff_type difference_type;
-		typedef T* pointer;
-		typedef const T* const_pointer;
-		typedef T& reference;
-		typedef const T& const_reference;
-		typedef T value_type;
-	public:
-		/// Default constructor
-		inline STLAllocator() throw() { }
-
-		inline ~STLAllocator() { }
-
-		/// Copy constructor
-		inline STLAllocator(const STLAllocator& other) throw() { }
-
-		/// Copy constructor with another type
-		template<typename U>
-		inline STLAllocator(const STLAllocator<U>&) throw() { }
-
-		/// Copy
-		inline STLAllocator<T>& operator=(const STLAllocator& other) {
-			return *this;
-		}
-
-		/// Copy with another type
-		template<typename U>
-		inline STLAllocator& operator=(const STLAllocator<U>& other) {
-			return *this;
-		}
-
-		/// Get address of a reference
-		inline pointer address(reference x) const {
-			return &x;
-		}
-
-		/// Get const address of a const reference
-		inline const_pointer address(const_reference x) const {
-			return &x;
-		}
-
-		/// Allocate n elements of type T
-		inline pointer allocate(size_type n, const void* hint = 0) {
-#if _DEBUG
-			if (GlobalAllocator == 0) { // Poor mans assert
-				*(char*)((void*)0) = '\0';
-			}
-#endif
-			return (pointer)Allocate(n * sizeof(T), 0, GlobalAllocator, "STLAllocator::allocate");
-		}
-
-		/// Free memory of pointer p
-		inline void deallocate(void* p, size_type n) {
-#if _DEBUG
-			if (GlobalAllocator == 0) { // Poor mans assert
-				*(char*)((void*)0) = '\0';
-			}
-#endif
-			Release(p, GlobalAllocator, "STLAllocator::deallocate");
-		}
-
-		/// Call the constructor of p
-		inline void construct(pointer p, const T& val) {
-			new ((T*)p) T(val);
-		}
-
-		/// Call the constructor of p with many arguments. C++11
-		template<typename U, typename... Args>
-		inline void construct(U* p, Args&&... args) {
-			::new((void*)p) U(stl_forward<Args>(args)...);
-		}
-
-		/// Call the destructor of p
-		inline void destroy(pointer p) {
-			p->~T();
-		}
-
-		/// Call the destructor of p of type U
-		template<typename U>
-		inline void destroy(U* p) {
-			p->~U();
-		}
-
-		/// Get the max allocation size
-		inline size_type max_size() const {
-#if _DEBUG
-			if (GlobalAllocator == 0) { // Poor mans assert
-				*(char*)((void*)0) = '\0';
-			}
-#endif
-			return GlobalAllocator->size;
-		}
-
-		/// A struct to rebind the allocator to another allocator of type U
-		template<typename U>
-		struct rebind {
-			typedef STLAllocator<U> other;
-		};
-	};
-} // End namespace memory
-#endif
-
-// Finish overriding new and delete
-#if MEM_DEFINE_NEW
-	#define new new(0, __LOCATION__, Memory::GlobalAllocator)
-#endif
-
-#if MEM_DEFINE_MALLOC
-	#define malloc(bytes) Memory::Allocate(bytes, 0, Memory::GlobalAllocator, __LOCATION__)
-	#define free(data) Memory::Release(data, Memory::GlobalAllocator, __LOCATION__)
-	#define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
-	#define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
-#endif
 
 // Make sure hte platform is set
 #ifndef ATLAS_32

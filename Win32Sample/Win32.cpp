@@ -150,6 +150,24 @@ struct Win32Color {
 		CreateBrushObject();
 	}
 
+	Win32Color(unsigned char _r, unsigned char _g, unsigned char _b) {
+		color = RGB(_r, _g, _b);
+		r = _r;
+		g = _g;
+		b = _b;
+		a = 255;
+		CreateBrushObject();
+	}
+
+	Win32Color(unsigned char v) {
+		color = RGB(v, v, v);
+		r = v;
+		g = v;
+		b = v;
+		a = 255;
+		CreateBrushObject();
+	}
+
 	~Win32Color() {
 		DestroyBrushObject();
 	}
@@ -878,7 +896,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				units = 1024 * 1024;
 			}
 
-			Memory::Allocate(howMany * (u32)units);
+			Memory::GlobalAllocator->Allocate(howMany * (u32)units);
 
 			update = true;
 		}
@@ -891,7 +909,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				for (; iter != 0 && counter != selection; iter = (iter->nextOffset == 0)? 0 : (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset), counter++);
 				WinAssert(counter == selection);
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-				Memory::Release(mem);
+				Memory::GlobalAllocator->Release(mem);
 			}
 			update = true;
 		}
@@ -904,7 +922,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT iMsg, WPARAM wParam, LPARAM lParam) {
 				}
 
 				u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-				Memory::Release(mem);
+				Memory::GlobalAllocator->Release(mem);
 
 				iter = next;
 			}
@@ -1061,16 +1079,16 @@ extern "C" DWORD CALLBACK run() {
 	#error Unknown platform
 #endif
 
-	gFrameBuffer = new FrameBuffer();
-	bgColor = new Win32Color();
-	freeMemoryColor = new Win32Color();
-	usedMemoryColor = new Win32Color();
-	trackMemoryColor = new Win32Color();
-	boxColor = new Win32Color();
-	textColor = new Win32Color();
+	gFrameBuffer = Memory::GlobalAllocator->New<FrameBuffer>();
+	bgColor = Memory::GlobalAllocator->New <Win32Color>(255);
+	freeMemoryColor = Memory::GlobalAllocator->New < Win32Color>();
+	usedMemoryColor = Memory::GlobalAllocator->New < Win32Color>();
+	trackMemoryColor = Memory::GlobalAllocator->New < Win32Color>();
+	boxColor = Memory::GlobalAllocator->New < Win32Color>();
+	textColor = Memory::GlobalAllocator->New < Win32Color>();
 
-	int* x = new int;
-	delete x;
+	int* x = Memory::GlobalAllocator->New < int>();
+	Memory::GlobalAllocator->Delete(x);
 
 	CreateMemoryWindow();
 
@@ -1086,20 +1104,20 @@ extern "C" DWORD CALLBACK run() {
 		Sleep(1);
 	} while (gMemoryWindow != 0);
 
-	delete gFrameBuffer;
-	delete bgColor;
-	delete freeMemoryColor;
-	delete usedMemoryColor;
-	delete trackMemoryColor;
-	delete boxColor;
-	delete textColor;
+	Memory::GlobalAllocator->Delete(gFrameBuffer);
+	Memory::GlobalAllocator->Delete(bgColor);
+	Memory::GlobalAllocator->Delete(freeMemoryColor);
+	Memory::GlobalAllocator->Delete(usedMemoryColor);
+	Memory::GlobalAllocator->Delete(trackMemoryColor);
+	Memory::GlobalAllocator->Delete(boxColor);
+	Memory::GlobalAllocator->Delete(textColor);
 
 	// Free up any dangling memory (maybe add to debug?)
 	Memory::Allocation* iter = Memory::GlobalAllocator->active;
 	while (iter != 0) {
 		Memory::Allocation* next = (iter->nextOffset == 0) ? 0 :  (Memory::Allocation*)((u8*)Memory::GlobalAllocator + iter->nextOffset);
 		u8* mem = (u8*)iter + sizeof(Memory::Allocation);
-		Memory::Release(mem);
+		Memory::GlobalAllocator->Release(mem);
 
 		iter = next;
 	}

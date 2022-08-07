@@ -3,20 +3,7 @@
 #pragma warning(disable:6011)
 #pragma warning(disable:28182)
 
-#if MEM_DEFINE_MALLOC
-	#undef malloc
-	#undef free
-	#undef memset
-	#undef memcpy
-#endif
-
-#if MEM_DEFINE_NEW
-	#undef new
-	#undef delete
-#endif
-
-// Game allocator should run without CRT. There is only one global variable, but it should not be initialized.
-Memory::Allocator* Memory::GlobalAllocator;// = 0;
+Memory::Allocator* Memory::GlobalAllocator;// TODO: Move to Web Assembly build only
 
 #ifndef ATLAS_U16
 	#define ATLAS_U16
@@ -1006,18 +993,11 @@ void* Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 }
 //#pragma optimize( "", on )
 
-void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const char* location) {
+void* Memory::Allocator::Allocate(u32 bytes, u32 alignment, const char* location) {
 	if (bytes == 0) {
 		bytes = 1; // At least one byte required
 	}
-	if (allocator == 0) {
-		allocator = GlobalAllocator;
-		assert(allocator != 0, "Memory::Allocate couldn't assign global allocator");
-		if (allocator == 0) {
-			assert(false, __LOCATION__);
-			return 0;
-		}
-	}
+	Memory::Allocator* allocator = this;
 	assert(bytes < allocator->size, "Memory::Allocate trying to allocate more memory than is available");
 	assert(bytes < allocator->size - allocator->requested, "Memory::Allocate trying to allocate more memory than is available");
 
@@ -1131,13 +1111,9 @@ void* Memory::Allocate(u32 bytes, u32 alignment, Allocator* allocator, const cha
 	return mem;
 }
 
-void Memory::Release(void* memory, Allocator* allocator, const char* location) {
+void Memory::Allocator::Release(void* memory, const char* location) {
 	assert(memory != 0, "Memory:Free can't free a null pointer");
-
-	if (allocator == 0) {
-		allocator = GlobalAllocator;
-		assert(allocator != 0, "Memory::Free couldn't assign global allocator");
-	}
+	Allocator* allocator = this;
 
 	// Retrieve allocation information from header. The allocation header always
 	// preceeds the allocation.
@@ -1208,92 +1184,6 @@ void Memory::Release(void* memory, Allocator* allocator, const char* location) {
 		allocator->releaseCallback(allocator, allocation, oldSize, paddedAllocationSize, firstPage, numPages);
 	}
 }
-
-#if MEM_IMPLEMENT_MALLOC
-extern "C" void* __cdecl malloc(Memory::ptr_type bytes) {
-	return Memory::Allocate((u32)bytes, 0, Memory::GlobalAllocator, "internal - malloc");
-}
-
-extern "C" void __cdecl free(void* data) {
-	return Memory::Release(data, Memory::GlobalAllocator, "internal - free");
-}
-
-extern "C" void* __cdecl memset(void* _mem, i32 _value, Memory::ptr_type _size) {
-	return Memory::Set(_mem, (u8)_value, (u32)_size, "internal - memset");
-}
-
-extern "C" void* __cdecl memcpy(void* dest, const void* src, Memory::ptr_type size) {
-	Memory::Copy(dest, src, (u32)size, "internal - memcpy");
-	return dest;
-}
-#endif
-
-#if MEM_IMPLEMENT_NEW
-void* __cdecl operator new (Memory::ptr_type size) {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new(size_t)");
-}
-
-void* __cdecl operator new (Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new(size_t, nothrow_t&)");
-}
-
-void* __cdecl  operator new (Memory::ptr_type size, u32 alignment, const char* location, Memory::Allocator* allocator) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate((u32)size, alignment, allocator, location);
-}
-
-void __cdecl operator delete (void* ptr) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*)");
-}
-
-void __cdecl operator delete (void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, nothrow_t&)");
-}
-
-void __cdecl operator delete (void* ptr, Memory::ptr_type size) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, size_t)");
-}
-
-void __cdecl operator delete (void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete(void*, size_t, nothrow_t&)");
-}
-
-void* __cdecl operator new[](Memory::ptr_type size) {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new[](size_t)");
-}
-
-void* __cdecl operator new[](Memory::ptr_type size, const std::nothrow_t& nothrow_value) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Allocate((u32)size, 0, Memory::GlobalAllocator, "internal - ::new[](size_t, nothrow_t&)");
-}
-
-void __cdecl operator delete[](void* ptr) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*)");
-}
-
-void __cdecl operator delete[](void* ptr, const std::nothrow_t& nothrow_constant) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, nothrow_t&)");
-}
-
-void __cdecl operator delete[](void* ptr, Memory::ptr_type size) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, size_t)");
-}
-
-void __cdecl operator delete[](void* ptr, Memory::ptr_type size, const std::nothrow_t& nothrow_constant) noexcept {
-	assert(Memory::GlobalAllocator != 0, "Global allocator can't be null");
-	return Memory::Release(ptr, Memory::GlobalAllocator, "internal - ::delete[](void*, size_t, nothrow_t&)");
-}
-#endif
 
 namespace Memory {
 	namespace Debug {
@@ -1787,17 +1677,6 @@ u8* Memory::Debug::DevPage(Allocator* allocator) {
 	return debugPage;
 }
 
-
-#if MEM_DEFINE_NEW
-	#define new new(0, __LOCATION__, Memory::GlobalAllocator)
-#endif
-
-#if MEM_DEFINE_MALLOC
-	#define malloc(bytes) Memory::Allocate(bytes, 0, Memory::GlobalAllocator, __LOCATION__)
-	#define free(data) Memory::Release(data, Memory::GlobalAllocator, __LOCATION__)
-	#define memset(mem, val, size) Memory::Set(mem, val, size, __LOCATION__)
-	#define memcpy(dest, src, size) Memory::Copy(dest, src, size, __LOCATION__)
-#endif
 
 #pragma warning(default:6011)
 #pragma warning(default:28182)
