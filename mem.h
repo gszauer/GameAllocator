@@ -373,6 +373,7 @@ namespace Memory {
 }
 
 
+
 // Some compile time asserts to make sure that all our memory is sized correctly and aligns well
 static_assert (sizeof(Memory::Allocator) % 8 == 0, "Memory::Allocator size needs to be 8 byte alignable for the allocation mask to start on u64 alignment without any padding");
 static_assert (sizeof(Memory::Allocation) % 8 == 0, "Memory::Allocation should be 8 byte alignable");

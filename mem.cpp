@@ -23,6 +23,10 @@ Memory::Allocator* Memory::GlobalAllocator;// TODO: Move to Web Assembly build o
 	#define NotImplementedException() (*(char*)((void*)0) = '\0')
 #endif
 
+extern "C" void* __cdecl memset(void* _mem, i32 _value, Memory::ptr_type _size) {
+	return Memory::Set(_mem, (u8)_value, (u32)_size, "internal - memset");
+}
+
 namespace Memory {
 	namespace Debug {
 		u32 u32toa(u8* dest, u32 destSize, u32 num);
@@ -464,11 +468,11 @@ namespace Memory {
 	}
 	
 	export void* GameAllocator_wasmAllocate(Memory::Allocator* allocator, int bytes, int alignment) {
-		return Memory::Allocate(bytes, alignment, allocator, "GameAllocator_wasmAllocate");
+		return Memory::GlobalAllocator->Allocate(bytes, alignment, "GameAllocator_wasmAllocate");
 	}
 
 	export void GameAllocator_wasmRelease(Memory::Allocator* allocator, void* mem) {
-		Memory::Release(mem, allocator, "GameAllocator_wasmAllocate");
+		Memory::GlobalAllocator->Release(mem, "GameAllocator_wasmAllocate");
 	}
 
 	export void GameAllocator_wasmSet(void* mem, int val, int size) {
