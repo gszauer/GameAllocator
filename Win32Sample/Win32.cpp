@@ -54,6 +54,10 @@ struct Win32Color* textColor;
 #define MB(x)   ((size_t) (x) << 20)
 #define GB(x)   ((size_t) (x) << 30)
 
+namespace Memory {
+	Allocator* GlobalAllocator = 0;
+}
+
 struct MemoryDebugInfo {
 	u8* PageMask;
 	u32 NumberOfPages;

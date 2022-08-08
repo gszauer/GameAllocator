@@ -308,21 +308,15 @@ namespace Memory {
 			T* object = ::new (memory) T();
 			return object;
 		}
-		// allocator->New<Object, >(__LOCATION__, path);
-		// f(x); // calls f<X&>(x)
-
-		// allocator->
 
 		template<class T>
-		inline void Delete(T* ptr) {
-			// TODO: Call inine free
+		inline void Delete(T* ptr, const char* location = 0) {
+			T* obj = (T*)ptr;
+			obj->T::~T();
+			this->Release(ptr, location);
 		}
-
 	};
 
-	// This is the allocator that malloc / new will use. You can have as many allocators as needed,
-	// but one of them should always be designated as the global allocator
-	extern Allocator* GlobalAllocator; 
 	// 4 KiB is a good default page size. Most of your small allocations will go trough the sub-allocators
 	// so this page size is mostly important for larger allocations. Feel free to change to something more
 	// appropriate if needed.

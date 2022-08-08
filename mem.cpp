@@ -3,8 +3,6 @@
 #pragma warning(disable:6011)
 #pragma warning(disable:28182)
 
-Memory::Allocator* Memory::GlobalAllocator;// TODO: Move to Web Assembly build only
-
 #ifndef ATLAS_U16
 	#define ATLAS_U16
 	typedef unsigned short u16;
@@ -18,6 +16,9 @@ Memory::Allocator* Memory::GlobalAllocator;// TODO: Move to Web Assembly build o
 #endif
 
 #if _WASM32
+	namespace Memory {
+		Allocator* wasmGlobalAllocator = 0;
+	}
 	#define NotImplementedException() __builtin_trap()
 #else
 	#define NotImplementedException() (*(char*)((void*)0) = '\0')
@@ -458,7 +459,7 @@ namespace Memory {
 
 		Memory::AlignAndTrim(&memory, &size);
 		Memory::Allocator* allocator = Memory::Initialize(memory, size);
-		Memory::GlobalAllocator = allocator;
+		Memory::wasmGlobalAllocator = allocator;
 
 		return allocator;
 	}
