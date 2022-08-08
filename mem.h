@@ -7,30 +7,24 @@ Game Memory Allocator:
 	Given a large array of memory, the library provides functions to allocate and release that memory similar to malloc / free.
 	The memory will be broken up into pages (4 KiB by default) and tracked at the page granularity. 
 	A sub-allocator provided which breaks the page up into a fast free list for smaller allocation.
-	Implementations and #defines for malloc, new, new[], free, delete, and delete[] are optionally provided.
-	An optional STL allocator is also optionally provided
 
 Usage:
 
 	Let's assume you have a void* to some large area of memory and know how many bytes large that area is.
 
-	Call the Memory::Initialize function. The first two arguments are the memory and size, the third argument
-	is the page size with which the memory should be managed. The default page size is 4 KiB
+	Call the Memory::Initialize function to create an allocator. The first two arguments are the memory and size, 
+	the third argument is the page size with which the memory should be managed. The default page size is 4 KiB
 
 	The memory being passed it should be 8 byte aligned, and the size of the memory should be a multiple of pageSize.
-
 	The Memory::AlignAndTrim helper function will align a region of memory so it's ready for initialize.
 	It modifies the memory and size variables that are passed to the function. AlignAndTrim returns the number of bytes lost.
 
-	After creating the main allocator, set the Memory::GlobalAllocator pointer returned by Memory::Initialize. 
-	If an allocator isn't specified (like the default new operator, or malloc) the GlobalAllocator will be used.
+	Allocate memory with the allocator objects Allocate function, and release memory with the its Release function. 
+	Allocate takes an optional alignment, which by default is 0. Only unaligned allocations utilize a fast free list allocator.
+	Both functions also take a const char* which is optionally the location of the allocation.
 
-	After setting the global allocator you can allocate memory with the Memory::Allocate function, and release
-	memory with the Memory::Release function. These functions require the same arguments as malloc & free,
-	they have some additional arguments as well. Allocate takes an optional alignment, which by default is 0.
-	Un-aligned allocation are prefered, they will be 4 or 8 byte aligned, and can utilize a fast free list allocator.
-	Both the Allocate and Release functions take an optional Allocator*, this allows the system to support multiple
-	allocator. Both functions also take a const char* which is optionally the location of the allocation.
+	New and delete functions are also provided, these will invoke the constructor / destructor of the class they are
+	being invoked on. New will forward up to three arguments and takes an optional location pointer.
 
 	When you are finished with an allocator, clean it up by calling Memory::Shutdown. The shutdown function 
 	will assert in debug builds if there are any memory leaks.
@@ -47,11 +41,15 @@ Example:
 
 		// Initialize the global allocator
 		u32 lost = Memory::AlignAndTrim(&m, &size, Memory::DefaultPageSize);
-		Memory::GlobalAllocator = Memory::Initialize(m, size, Memory::DefaultPageSize);
+		Memory::Allocator* allocator = Memory::Initialize(m, size, Memory::DefaultPageSize);
 
 		// Allocate & release memory
-		int* number = Memory::Allocate(sizeof(int)); // Only the number of bytes is required
-		Memory::Release(number); // Only the void* is required
+		int* number = allocator->Allocate(sizeof(int)); // Only the number of bytes is required
+		allocator->Release(number); // Only the void* is required
+
+		// New and delete can also be used:
+		SomeClass* obj = allocator->New<SomeClass>("arguments");
+		allocator->Delete(obj);
 
 		// Cleanup the global allocator
 		Memory::Shutdown(Memory::GlobalAllocator);
@@ -82,7 +80,8 @@ Debugging:
 	There are a few debug functions exposed in the Memory::Debug namespace. When an allocator is initialized, the page
 	immediateley before the first allocatable page is reserved as a debug page. You can fill this page with whatever 
 	data is needed. Any function in Memory::Debug might overwrite the contents of the debug page. You can get a pointer
-	to the debug page of an allocator with the Memory::Debug::DevPage function.
+	to the debug page of an allocator with the RequestDbgPage function. Be sure to release the page after you are dont
+	using it by calling ReleaseDbgPage();
 
 	The Memory::Debug::MemInfo function can be used to retrieve information about the state of the memory allocator.
 	It provides meta data like how many pages are in use, a list of active allocations, and a visual bitmap chart to
@@ -265,6 +264,8 @@ namespace Memory {
 
 		u32 numPagesUsed;
 		u32 peekPagesUsed;			// Use this to monitor how much memory your application actually needs
+		u32 mask;
+		u32 mask_padding;
 
 #if ATLAS_32
 		u32 padding_32bit[9];		// Padding to make sure the struct stays the same size in x64 / x86 builds
@@ -272,6 +273,9 @@ namespace Memory {
 
 		void* Allocate(u32 bytes, u32 alignemnt = 0, const char* location = 0);
 		void Release(void* t, const char* location = 0);
+
+		u8* RequestDbgPage();
+		void ReleaseDbgPage();
 
 		template<class T, typename A1>
 		inline T* New(A1&& a1, const char* location = 0) {
@@ -362,7 +366,6 @@ namespace Memory {
 
 		void MemInfo(Allocator* allocator, WriteCallback callback, void* userdata = 0);
 		void PageContent(Allocator* allocator, u32 page, WriteCallback callback, void* userdata = 0);
-		u8* DevPage(Allocator* allocator);
 	}
 }
 
@@ -370,9 +373,8 @@ namespace Memory {
 
 // Some compile time asserts to make sure that all our memory is sized correctly and aligns well
 static_assert (sizeof(Memory::Allocator) % 8 == 0, "Memory::Allocator size needs to be 8 byte alignable for the allocation mask to start on u64 alignment without any padding");
-static_assert (sizeof(Memory::Allocation) % 8 == 0, "Memory::Allocation should be 8 byte alignable");
 static_assert (Memory::TrackingUnitSize% Memory::AllocatorAlignment == 0, "Memory::MaskTrackerSize must be a multiple of 8 (bits / byte)");
-static_assert (sizeof(Memory::Allocator) == 96, "Memory::Allocator should be 72 bytes (768 bits)");
+static_assert (sizeof(Memory::Allocator) == 96 + 8, "Memory::Allocator is not the expected size");
 #if MEM_TRACK_LOCATION
 	static_assert (sizeof(Memory::Allocation) == 24, "Memory::Allocation should be 24 bytes (192 bits)");
 #else

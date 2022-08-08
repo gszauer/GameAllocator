@@ -5,22 +5,15 @@
 The memory will be broken up into pages (4 KiB by default) and tracked at the page granularity. 
 A sub-allocator provided which breaks the page up into a fast free list for smaller allocation.
 
-Implementations and ```#defines``` for ```malloc```, ```new```, ```new[]```, ```free```, ```delete```, and ```delete[]``` are optionally provided. An optional STL allocator is also provided.
-
-> All the code for managing memory is in [mem.h](mem.h) and [mem.cpp](mem.cpp). The sample files ([Win32Sample/Win32.cpp](Win32Sample/Win32.cpp), and [WebAssemblySample/WebAssembly.cpp](WebAssemblySample/WebAssembly.cpp)) are not production ready,they are a hacky font-end to the memory manager for the given platform. The same data that it displays is available trough the ```Memory::Debug``` namespace.
-
 ![Win32 memory allocator](Win32Sample/Win32Small.png)
 
 ## Usage
 
-Let's assume you have a ```void*``` to some large area of memory and know how many bytes large that area is.  Call the ```Memory::Initialize``` function. The first two arguments are the memory and size, the third argument is the page size with which the memory should be managed. The default page size is 4 KiB. The pointer being passed to ```Memory::Initialize``` should be 8 byte aligned, and the size of the memory should be a multiple of the ```pageSize``` argument.
+Let's assume you have a ```void*``` to some large area of memory and know how many bytes large that area is.  Call the ```Memory::Initialize``` function to create an allocator. The first two arguments are the memory and size, the third argument is the page size with which the memory should be managed. The default page size is 4 KiB. The pointer being passed to ```Memory::Initialize``` should be 8 byte aligned, and the size of the memory should be a multiple of the ```pageSize``` argument.
 
 The ```Memory::AlignAndTrim``` helper function will align a region of memory so it's ready for initialize. This function modifies the ```memory``` and ```size``` variables that are passed to the function. ```Memory::AlignAndTrim``` returns the number of bytes lost.
 
-> After creating an allocator, set the ```Memory::GlobalAllocator``` pointer to the object returned by ```Memory::Initialize```.  If an allocator isn't specified (like the default ```new``` operator, or ```malloc``` functions) the ```Memory::GlobalAllocator``` object will be used instead.
-
-You can allocate memory with the ```Memory::Allocate``` function, and release memory with the ```Memory::Release``` function. These functions require the same arguments as ```malloc``` & ```free```,
-	and they also have optional arguments. ```Allocate``` takes an optional ```alignment```, which by default is 0. Un-aligned allocation are prefered, they will be 4 or 8 byte aligned, and can utilize a fast free list allocator. Both the ```Allocate``` and ```Release``` functions take an optional ```Allocator*```, this allows the system to support multiple allocators. Both functions also take an optional ```const char*``` which is the location of the allocation.
+You can allocate memory with the ```Allocate``` function of the allocator, and release memory with its ```Release``` function. Alloctions that don't specify an alignment can take advantage of a faster pool allocator. The allocator struct also provides a ```New``` and ```Delete``` method to call constructors and destructors similarly to new and delete. ```New``` is set up to forward up to 3 arguments, adding additional arguments is trivial.
 
 When you are finished with an allocator, clean it up by calling ```Memory::Shutdown```. The shutdown function will assert in debug builds if there are any memory leaks.
 
@@ -36,15 +29,14 @@ void run() {
 
     // Initialize the global allocator
     u32 lost = Memory::AlignAndTrim(&memory, &size, Memory::AllocatorAlignment, Memory::DefaultPageSize);
-    Memory::GlobalAllocator = Memory::Initialize(memory, size, Memory::DefaultPageSize);
+    Memory::Allocator* allocator = Memory::Initialize(memory, size, Memory::DefaultPageSize);
 
-    // Allocate & release memory
-    int* number = Memory::Allocate(sizeof(int)); // Only the number of bytes is required
-    Memory::Release(number); // Only the void* is required
+    // Allocate & release memory (could also call new / delete)
+    int* number = allocator->Allocate(sizeof(int)); // Only the number of bytes is required
+    allocator->Release(number); // Only the void* is required
 
     // Cleanup the global allocator
-    Memory::Shutdown(Memory::GlobalAllocator);
-    Memory::GlobalAllocator = 0;
+    Memory::Shutdown(allocator);
 
     // Release memory back to operating system
     VirtualFree(memory, 0, MEM_RELEASE);
@@ -56,17 +48,12 @@ void run() {
 * ```MEM_FIRST_FIT```: This affects how fast memory is allocated. If it's set then every allocation searches for the first available page from the start of the memory. If it's not set, then an allocation header is maintained. It's advanced with each allocation, and new allocations search for memory from the allocation header.
 * ```MEM_CLEAR_ON_ALLOC```: When set, memory will be cleared to 0 before being returned from ```Memory::Allocate```: If both clear and debug on alloc are set, clear will take precedence
 * ```MEM_DEBUG_ON_ALLOC```: If set, full page allocations will fill the padding of the page with "```-MEMORY```"
-* ```MEM_IMPLEMENT_MALLOC```: Provide function declarations and implementations for: ```malloc```, ```free```, ```memset```, and ```memcpy```. These methods can not track allocation location.
-* ```MEM_DEFINE_MALLOC```: If set, ```malloc``` will be declared as a ```#define``` for ```Memory::Allocate```: and similarly free will be declared as a ```#define``` for ```Memory::Release```
-* ```MEM_IMPLEMENT_NEW```: Provide function declarations and implementations for ```new``` & ```delete```
-* ```MEM_DEFINE_NEW```: If set, new will be declared as a ```#define``` for ```Memory::Allocate```, and similarly delete will be declared as a #define for ```Memory::Release```
-* ```MEM_IMPLEMENT_STL```: If set, ```Memory::STLAllocator<T>``` is defined. It can be used for STL allocators like so: ```std::vector<int, Memory::STLAllocator<int>> numbers;```
 * ```MEM_USE_SUBALLOCATORS```: If set, small allocations will be made using a free list allocaotr. There are free list allocators for 64, 128, 256, 512, 1024 and 2049 byte allocations. Only allocations that don't specify an alignment can use the fast free list allocator. The sub-allocator will provide better page utilization, for example a 4096 KiB page can hold 32 128 bit allocations.
 * ```MEM_TRACK_LOCATION```: If set, a ```const char*``` will be added to ```Memory::Allocation``` which tracks the ```__LINE__``` and ```__FILE__``` of each allocation. Setting this bit will add 8 bytes to the ```Memory::Allocation``` struct.
 
 # Debugging
 
-There are a few debug functions exposed in the ```Memory::Debug``` namespace. When an allocator is initialized, the page immediateley before the first allocatable page is reserved as a debug page. You can fill this page with whatever  data is needed. Any function in ```Memory::Debug``` might overwrite the contents of the debug page. You can get a pointer to the debug page of an allocator with the ```Memory::Debug::DevPage``` function.
+There are a few debug functions exposed in the ```Memory::Debug``` namespace. When an allocator is initialized, the page immediateley before the first allocatable page is reserved as a debug page. You can fill this page with whatever  data is needed. Any function in ```Memory::Debug``` might overwrite the contents of the debug page. You can get a pointer to the debug page of an allocator with the ```RequestDbgPage``` function of the allocator. Be sure to release the page with ```ReleaseDbgPage``` after you are done using it..
 
 The ```Memory::Debug::MemInfo``` function can be used to retrieve information about the state of the memory allocator. It provides meta data like how many pages are in use, a list of active allocations, and a visual bitmap chart to make debugging the memory bitmask easy. You can write this information to a file like so:
 

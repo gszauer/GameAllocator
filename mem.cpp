@@ -574,7 +574,7 @@ namespace Memory {
 	export void* GameAllocator_wasmGetAllocationDebugName(Memory::Allocator* allocator, void* _m) {
 		const char* l = "mem_GetAllocationDebugName";
 
-		u8* debugPage = Memory::Debug::DevPage(allocator);
+		u8* debugPage = allocator->RequestDbgPage();
 		u32 debugSize = allocator->pageSize;
 		
 		// Reset memory buffer
@@ -680,6 +680,8 @@ namespace Memory {
 
 		*mem = '\0';
 
+		allocator->ReleaseDbgPage();
+
 		return debugPage + i_to_a_buff_size;
 	}
 #endif
@@ -750,6 +752,7 @@ Memory::Allocator* Memory::Initialize(void* memory, u32 bytes, u32 pageSize) {
 	Set(memory, 0, sizeof(Allocator), "Memory::Initialize");
 	allocator->size = bytes;
 	allocator->pageSize = pageSize;
+	allocator->mask = 0;
 
 	// Set up the mask that will track our allocation data
 	u32* mask = (u32*)AllocatorPageMask(allocator);
@@ -997,6 +1000,40 @@ void* Memory::Set(void* memory, u8 value, u32 size, const char* location) {
 	return memory;
 }
 //#pragma optimize( "", on )
+
+u8* Memory::Allocator::RequestDbgPage() {
+	Memory::Allocator* allocator = this;
+
+	assert(allocator->mask == 0, "Debug page already in use");
+	allocator->mask  = 1;
+
+	// Set up the mask that will track our allocation data
+	u32* mask = (u32*)AllocatorPageMask(allocator);
+	u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
+
+	// Find how many pages the meta data for the header + allocation mask will take up. 
+	// Store the offset to first allocatable, 
+	u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
+	u32 numberOfMasksUsed = metaDataSizeBytes / allocator->pageSize;
+	if (metaDataSizeBytes % allocator->pageSize != 0) {
+		numberOfMasksUsed += 1;
+	}
+	metaDataSizeBytes = numberOfMasksUsed * allocator->pageSize; // This way, allocatable will start on a page boundary
+
+	// Add a debug page at the end
+	metaDataSizeBytes += allocator->pageSize;
+	numberOfMasksUsed += 1;
+
+	u8* debugPage = (u8*)allocator + metaDataSizeBytes - allocator->pageSize; // Debug page is always one page before allocatable
+	return debugPage;
+}
+
+void Memory::Allocator::ReleaseDbgPage() {
+	Memory::Allocator* allocator = this;
+
+	assert(allocator->mask != 0, "Debug page not in use");
+	allocator->mask  = 0;
+}
 
 void* Memory::Allocator::Allocate(u32 bytes, u32 alignment, const char* location) {
 	if (bytes == 0) {
@@ -1268,7 +1305,7 @@ namespace Memory {
 void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* userdata) {
 	const char* l = "Memory::Debug::DumpAllocationHeaders";
 
-	u8* debugPage = Memory::Debug::DevPage(allocator);
+	u8* debugPage = allocator->RequestDbgPage();
 	u32 debugSize = allocator->pageSize;
 
 	// Reset memory buffer
@@ -1645,6 +1682,8 @@ void Memory::Debug::MemInfo(Allocator* allocator, WriteCallback callback, void* 
 			memSize = allocator->pageSize - i_to_a_buff_size;
 		}
 	}
+
+	allocator->ReleaseDbgPage();
 }
 
 void Memory::Debug::PageContent(Allocator* allocator, u32 page, WriteCallback callback, void* userdata) {
@@ -1659,29 +1698,6 @@ void Memory::Debug::PageContent(Allocator* allocator, u32 page, WriteCallback ca
 	mem += chunk;
 	callback(mem, allocator->pageSize - (allocator->pageSize / 4) * 3, userdata);
 }
-
-u8* Memory::Debug::DevPage(Allocator* allocator) {
-	// Set up the mask that will track our allocation data
-	u32* mask = (u32*)AllocatorPageMask(allocator);
-	u32 maskSize = AllocatorPageMaskSize(allocator) / (sizeof(u32) / sizeof(u8)); // convert from u8 to u32
-
-	// Find how many pages the meta data for the header + allocation mask will take up. 
-	// Store the offset to first allocatable, 
-	u32 metaDataSizeBytes = AllocatorPaddedSize() + (maskSize * sizeof(u32));
-	u32 numberOfMasksUsed = metaDataSizeBytes / allocator->pageSize;
-	if (metaDataSizeBytes % allocator->pageSize != 0) {
-		numberOfMasksUsed += 1;
-	}
-	metaDataSizeBytes = numberOfMasksUsed * allocator->pageSize; // This way, allocatable will start on a page boundary
-
-	// Add a debug page at the end
-	metaDataSizeBytes += allocator->pageSize;
-	numberOfMasksUsed += 1;
-
-	u8* debugPage = (u8*)allocator + metaDataSizeBytes - allocator->pageSize; // Debug page is always one page before allocatable
-	return debugPage;
-}
-
 
 #pragma warning(default:6011)
 #pragma warning(default:28182)
