@@ -5,8 +5,225 @@
         <meta charset="utf-8">  
         <title>Game Memory Allocator, WASM</title>  
         <meta name="description" content="Game Memory Allocator, WASM, Web Assembly">  
-        <script type="text/javascript" src="GameAllocator.js"></script>
+        <script type="text/javascript" src="mem.js"></script>
         <link rel="stylesheet" href="GameAllocator.css" />
+        <script type="text/javascript">
+            let memorySize = 0;
+            let heapSize = 0;
+            let allocator = new GameAllocator(memorySize);
+
+            let wasmInstance = null;
+            let Allocations = []; 
+            let GlobalDumpState = null;
+            let pageBoxes = [];
+            let PagesInUse = [];
+
+            const TriggerDownload = function(filename, text) {
+                let element = document.createElement('a');
+                element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+                element.setAttribute('download', filename);
+                element.style.display = 'none';
+                document.body.appendChild(element);
+                element.click();
+                document.body.removeChild(element);
+            }
+
+            const ClearSelectBox = function(selectElement) {
+                let L = selectElement.options.length - 1;
+                for(let i = L; i >= 0; i--) {
+                    selectElement.remove(i);
+                }
+            }
+
+            const Update = function() {
+                let memBytes = allocator.Size();
+                let overheadPages = allocator.GetNumOverheadPages();
+                let requestedBytes = allocator.GetRequestedBytes();
+                let servedBytes = allocator.GetServedBytes();
+
+                let freePages = 0;
+                let usedPages = 0;
+                let numPages = PagesInUse.length;
+
+                for (let i = 0; i < numPages; ++i) {
+                    let inUse = allocator.IsPageInUse(i);
+                    let box = pageBoxes[i];
+
+                    box.classList.remove('red');
+                    box.classList.remove('blue');
+                    box.classList.remove('green');
+
+                    PagesInUse[i] = inUse;
+                    if (inUse) {
+                        usedPages++;
+                        if (i < overheadPages) {
+                            box.classList.add('red');
+                        }
+                        else {
+                            box.classList.add('green');
+                        }
+                    }
+                    else {
+                        freePages++;
+                        box.classList.add('blue');
+                    }
+                }
+
+                let row1 = document.getElementById("metadata-row1");
+                let row2 = document.getElementById("metadata-row2");
+                let row3 = document.getElementById("metadata-row3");
+                let row4 = document.getElementById("metadata-row4");
+
+                let kib = Math.floor(allocator.Size() / 1024);
+                let mib = Math.floor(kib / 1024);
+                
+                row1.innerHTML = "Tracking " + allocator.GetNumPages() + " Pages, " + kib + " KiB (" + mib + " MiB)";
+                row2.innerHTML = "Pages: " + freePages + " free, " + usedPages + " used, " + overheadPages + " overhead";
+                row3.innerHTML = "Requested: " + requestedBytes + " bytes (~" + Math.floor(Math.floor(requestedBytes / 1024) / 1024) + " MiB)";
+                row4.innerHTML = "Served: " + servedBytes + " bytes (~" + Math.floor(Math.floor(servedBytes / 1024) / 1024) + " MiB)";
+
+                let allocList = document.getElementById("allocations");
+                ClearSelectBox(allocList);
+                let numAllocatons = Allocations.length;
+                for (let i = 0; i < numAllocatons; ++i) {
+                    let strPtr = allocator.GetAllocationDebugInfo(Allocations[i]);
+                    let strLen = allocator.StrLen(strPtr);
+
+                    const array = new Uint8Array(allocator.memory.buffer, strPtr, strLen);
+                    const decoder = new TextDecoder()
+                    const string = decoder.decode(array);
+
+                    let option = document.createElement("option");
+                    option.text = string;
+                    allocList.add(option);
+                }
+            }
+
+            function allocate_mem() {
+                let allocSize = Math.floor(document.getElementById("allocation-size").value);
+                let allocUnit = document.getElementById("allocation-unit");
+
+                if (allocUnit.value == "kilobytes") {
+                    allocSize = Math.floor(allocSize * 1024);
+                }
+                else if (allocUnit.value == "megabytes") {
+                    allocSize = Math.floor(allocSize * 1024 * 1024);
+                }
+
+                let allocation = allocator.Allocte(allocSize);
+                if (allocation == 0) { // Failed
+                    alert("allocation failed");
+                    console.error("allocation failed");
+                }
+                else { // Track the allocatin
+                    Allocations.push(allocation);
+                }
+
+                setTimeout(Update, 1);
+            }
+
+            function free_all() {
+                let numAllocs = Allocations.length;
+                if (numAllocs == 0) {
+                    setTimeout(update, 1);
+                    return;
+                }
+                for (let i = 0; i < numAllocs; ++i) {
+                    allocator.Release(Allocations[i]);
+                }
+                Allocations = [];
+                setTimeout(Update, 1);
+            }
+
+            function free_selected() {
+                let allocList = document.getElementById("allocations");
+                let selected = [];
+                for (let option of allocList.options) {
+                    if (option.selected) {
+                        selected.push(option.index);
+                    }
+                }   
+
+                let numFree = selected.length;
+                for (let i = 0; i < numFree; ++i) {
+                    allocator.Release(Allocations[selected[i]]);
+                }
+
+                for (let i = numFree - 1; i >= 0; --i) {
+                    Allocations.splice(selected[i], 1);
+                }
+
+                setTimeout(Update, 1);
+            }
+
+            function dump_state() {
+                let dump = allocator.DebugDumpState();
+                TriggerDownload("MemInfo.txt", dump);
+            }
+
+            const InitUI = function() {
+                let memoryDiv = document.getElementById("mem");
+                let heapSizediv = document.getElementById("heap-size");
+                let chartDiv = document.getElementById("chart");
+
+                let numPages = allocator.GetNumPages();
+
+                let children = chartDiv.children;
+                if (children !== null) { // Purge all old pages
+                    for(let i = children.length - 1; i >= 0; --i) {
+                        let child = children[i].remove();
+                    }
+                }
+                for (let i = 0, size = numPages; i < size; ++i) { // Add fresh pages
+                    let box = document.createElement("div");
+                    chartDiv.appendChild(box);
+                    box.classList.add('blue');
+                    pageBoxes.push(box);
+                }
+
+                memoryDiv.style.display = "block";
+                for (let i = 0, size = allocator.GetNumPages(); i < size; ++i) {
+                    PagesInUse.push(false);
+                }
+                setTimeout(Update, 1);
+            }
+
+            const init = function() {
+                let configDiv = document.getElementById("config");
+                configDiv.style.display = "none";
+
+                let wasmPageSize = 64 * 1024; // 64 KiB
+                let heapSizediv = document.getElementById("heap-size");
+                heapSize = Math.ceil(heapSizediv.valueAsNumber);
+                let heapUnitDiv = document.getElementById("heap-unit");
+                if (heapUnitDiv.value == "kilobytes") {
+                    heapSize = Math.ceil(heapSize * 1024);
+                }
+                else if (heapUnitDiv.value == "megabytes") {
+                    heapSize = Math.ceil(heapSize * 1024 * 1024);
+                }
+
+                let stackSize = 4194304;
+                let dataSize = 1024 * 1024 * 1;
+
+                allocator = new GameAllocator(heapSize + dataSize + stackSize, heapSize);
+
+                let importObject = {
+                    module: {},
+                    env: { }
+                };
+
+                allocator.InjectWebAssemblyImportObject(importObject);
+
+                WebAssembly.instantiateStreaming(fetch('GameAllocator.wasm'), importObject).then(prog => {
+                    wasmInstance = prog.instance;
+                    allocator.InitializeWebAssembly(wasmInstance.exports);
+                    InitUI();
+                });
+            }
+
+        </script>
+        <link href="data:image/x-icon;base64,AAABAAEAEBAQAAEABAAoAQAAFgAAACgAAAAQAAAAIAAAAAEABAAAAAAAgAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAvW8cAP///wCjoJ0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEREREQAAAAAiIiIiAAAAACIiIiIAAAAAIiIiIgAAAAAiIiIiAAAAACIiIiIAAAAAAAAAAAAAAAAAAAAAAAAAAAMzMzAAAAAAAzMAMAAAAAADMwAwAAAAAAMzADAAAAAAAAAAAAAAAAAAAAAAAAD//wAAwAMAAMADAADAAwAAwAMAAMADAADAAwAAwAMAAMADAADAAwAAwAMAAMADAADABwAAwA8AAP//AAD//wAA" rel="icon" type="image/x-icon" />
     </head>  
     <body>
         <div id="config">
