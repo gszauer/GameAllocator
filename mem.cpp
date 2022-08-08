@@ -469,11 +469,11 @@ namespace Memory {
 	}
 	
 	export void* GameAllocator_wasmAllocate(Memory::Allocator* allocator, int bytes, int alignment) {
-		return Memory::GlobalAllocator->Allocate(bytes, alignment, "GameAllocator_wasmAllocate");
+		return Memory::wasmGlobalAllocator->Allocate(bytes, alignment, "GameAllocator_wasmAllocate");
 	}
 
 	export void GameAllocator_wasmRelease(Memory::Allocator* allocator, void* mem) {
-		Memory::GlobalAllocator->Release(mem, "GameAllocator_wasmAllocate");
+		Memory::wasmGlobalAllocator->Release(mem, "GameAllocator_wasmAllocate");
 	}
 
 	export void GameAllocator_wasmSet(void* mem, int val, int size) {
